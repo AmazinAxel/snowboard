@@ -19,11 +19,14 @@
 
           python3
 
-          # needed?
+          # Shared libs the PlatformIO-bundled binaries expect. These are
+          # prebuilt FHS ELFs (pio ships its own openocd rather than using the
+          # one above), so they dynamically link against the usual suspects.
           stdenv.cc.cc.lib
           zlib
           libusb1
           ncurses5
+          systemd # libudev.so.1, needed by the bundled openocd
         ];
 
 #        runScript = "bash";

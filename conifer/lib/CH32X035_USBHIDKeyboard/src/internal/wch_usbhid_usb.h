@@ -91,7 +91,10 @@ typedef struct __attribute__((packed)) {
     uint8_t  bInterval;
 } USB_ENDP_DESCR;
 
-typedef struct __attribute__((packed)) {
+/* aligned(2) is the struct's real alignment: bString sits at offset 2 after
+   two uint8_t fields, so taking a uint16_t* to it is safe. Stating it lets
+   GCC drop the -Waddress-of-packed-member false positive; layout is unchanged. */
+typedef struct __attribute__((packed, aligned(2))) {
     uint8_t  bLength;
     uint8_t  bDescriptorType;
     uint16_t bString[64];

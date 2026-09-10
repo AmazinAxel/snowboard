@@ -61,7 +61,7 @@ The advantages of all of the above result in a very well thought-out keyboard fo
 
 We use a very new chip which does not have support for those firmwares yet. The chip is easily programmable with Platformio and there has been work already to make it work as an HID keyboard device, so I am expanding on that to make this function as a layered keyboard.
 
-First, you need to short the two pads on the top right of the board and plug the device into your computer through a data cable. This puts the device into boot mode so you can flash the firmware.
+To flash, just plug it into your computer over USB. If you have already flashed the firmware, just hold A when plugging in the board to enter boot mode.
 
 Clone the repo and go into the conifer/ folder. This is the custom firmware that Snowlayer runs on.
 
