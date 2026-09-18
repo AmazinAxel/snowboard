@@ -53,8 +53,17 @@ enum { BASE = 0, SYM = 1, NUM = 2, ADJUST = 3 };
 // The keymap. One block per layer, laid out exactly like the physical board.
 //
 // KEYMAP[layer][row][col] — rows/cols are the electrical matrix; the macro
-// below reorders a human-readable layout into it, so you only ever type the
-// visual arrangement.
+// below maps a human-readable layout into it, so you only ever type the visual
+// arrangement.
+//
+// Both halves are in the same column order: COL0 is the inner column on each
+// hand, COL5 the outer. The right half is NOT electrically mirrored.
+//
+// This macro used to reverse the right half's columns, on the belief that the
+// right hand's COL0 was its outer column. It is not — the symptom was that the
+// whole right half typed mirrored (n->Enter, m->/, ,->., h->', j->;, k->l),
+// which is a clean col <-> 5-col permutation and the signature of applying a
+// flip to a matrix that was already in order.
 // ---------------------------------------------------------------------------
 
 // clang-format off
@@ -67,10 +76,10 @@ enum { BASE = 0, SYM = 1, NUM = 2, ADJUST = 3 };
   /* ROW1 */ { L10, L11, L12, L13, L14, L15 },   \
   /* ROW2 */ { L20, L21, L22, L23, L24, L25 },   \
   /* ROW3 */ { KC_NO, KC_NO, KC_NO, L30, L31, L32 }, \
-  /* ROW4 */ { R05, R04, R03, R02, R01, R00 },   \
-  /* ROW5 */ { R15, R14, R13, R12, R11, R10 },   \
-  /* ROW6 */ { R25, R24, R23, R22, R21, R20 },   \
-  /* ROW7 */ { KC_NO, KC_NO, KC_NO, R32, R31, R30 } }
+  /* ROW4 */ { R00, R01, R02, R03, R04, R05 },   \
+  /* ROW5 */ { R10, R11, R12, R13, R14, R15 },   \
+  /* ROW6 */ { R20, R21, R22, R23, R24, R25 },   \
+  /* ROW7 */ { KC_NO, KC_NO, KC_NO, R30, R31, R32 } }
 
 static const uint8_t KEYMAP[NUM_LAYERS][8][6] = {
 

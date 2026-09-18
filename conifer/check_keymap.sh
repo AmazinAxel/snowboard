@@ -42,15 +42,13 @@ echo "BASE layer, electrical matrix:"
 expect 0 "Tab Q W E R T"          2b 14 1a 08 15 17
 expect 1 "Ctl A S D F G"          e0 04 16 07 09 0a
 expect 2 "Sft Z X C V B"          e1 1d 1b 06 19 05
-# Right half, rows 4-6: MIRRORED, col0 is the outer column.
-expect 4 "Bsp P O I U Y (mirror)" 2a 13 12 0c 18 1c
-expect 5 "'   ; L K J H (mirror)" 34 33 0f 0e 0d 0b
-expect 6 "Ent / . , M N (mirror)" 28 38 37 36 10 11
+# Right half, rows 4-6: same column order as the left, col0 is the inner column.
+expect 4 "Y U I O P Bsp"          1c 18 0c 12 13 2a
+expect 5 "H J K L ; '"            0b 0d 0e 0f 33 34
+expect 6 "N M , . / Ent"          11 10 36 37 38 28
 # Thumb rows: only cols 3-5 are populated.
-# Right thumbs are mirrored like the rest of that half, so Alt (the outermost
-# key visually) lands in col3 and the one-shot Shift in col5.
 expect 3 "-- -- -- Esc SYM Spc"      00 00 00 29 "(0xf0|(sym))" 2c
-expect 7 "-- -- -- Alt* NUM Sft*"    00 00 00 "((0xe2)|0x08)" "(0xf0|(num))" "((0xe1)|0x08)"
+expect 7 "-- -- -- Sft* NUM Alt*"    00 00 00 "((0xe1)|0x08)" "(0xf0|(num))" "((0xe2)|0x08)"
 
 # The boot combo must be reachable: Q and A on the same column, adjacent rows.
 echo "Boot combo (Q+A):"

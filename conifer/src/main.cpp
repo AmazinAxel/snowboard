@@ -13,7 +13,14 @@
 #include "keymap.h"
 
 // --- Wiring -----------------------------------------------------------------
-// Rows are driven (outputs), columns are sensed (inputs with pull-up).
+// Rows are driven (open-drain outputs), columns are sensed (inputs with pull-up).
+//
+// Open-drain, not push-pull. A push-pull row actively drives 3.3V when it is
+// deselected, which fights the column pull-ups through every switch on that
+// row. On the long interconnect runs that fight leaks enough onto a column to
+// read as pressed while a *different* row is selected — one key then reports
+// every key in its column. Open-drain makes a deselected row float, so only
+// the selected row can pull a column down.
 // This is ROW2COL in QMK terms, and it is set by the diode orientation on the
 // PCB: the cathode sits at the row (D1 pin 1 = ROW0, pin 2 = anode = the switch
 // side). Current can therefore only flow switch -> row, so the row is the end
@@ -52,22 +59,48 @@ static const uint8_t ROW_BITS[8] = { 0, 3, 4, 6, 8, 7, 10, 9 };   // PB pins
 // ponytail: per-key counters, plenty for 42 keys; no fancier algorithm needed.
 static const uint8_t DEBOUNCE_SCANS = 5;
 
-// Settle time for a row line after it is driven, in CPU cycles at 48MHz
-// (~21ns each). The interconnect between halves is the longest run, so this
-// is the knob to turn if the far half ever reports phantom presses.
-// 150 cycles is ~3us, well past the RC of the trace plus the diode.
+// Settle time for a row line, in CPU cycles at 48MHz (~21ns each). Used both
+// after a row is driven low and after it is released. The interconnect between
+// halves is the longest run, so this is the knob to turn if the far half ever
+// reports phantom presses.
+//
+// This is sized for the RELEASE edge, which is far slower than the drive edge
+// and is what sets the floor. An open-drain row does not drive high when it is
+// deselected — it floats, and the line returns high only through the column
+// pull-up, the diode, and the switch. That RC is much slower than the active
+// pull-down, and a row still sitting low when the next row is sampled keeps
+// pulling its pressed key's column down, so that press is attributed to every
+// row scanned afterwards. The symptom is one key reporting as its entire
+// column, worst on row 4 (the right half's top row, the far end of the
+// interconnect).
+//
+// 1500 cycles is ~31us, which is deliberately generous: it is a diagnostic
+// value, not a tuned one. Bisect downward once the fault is confirmed gone and
+// drop SCAN_INTERVAL_US to match.
+//
 // Arduino's delayMicroseconds() does 64-bit division on a core with no
 // hardware divider, which costs more than the delay itself at this scale.
-static const uint32_t MATRIX_SETTLE_CYCLES = 150;
+static const uint32_t MATRIX_SETTLE_CYCLES = 1500;
 
 static inline void settleDelay() {
   for (uint32_t i = 0; i < MATRIX_SETTLE_CYCLES; i++) __asm__ volatile("nop");
 }
 
-// Target time for one full matrix scan, in microseconds. 200us gives five
-// scans per 1ms USB frame — enough for the debounce filter to settle between
-// polls without spinning the core flat out. Lower it for a faster debounce
-// response, raise it to trade latency for current draw.
+// Target time for one full matrix scan, in microseconds.
+//
+// This is a floor, not a period: if a scan already takes longer than this the
+// pacing loop at the end of loop() falls straight through and does nothing.
+// That is the case at the current MATRIX_SETTLE_CYCLES — 8 rows x 2 settles x
+// ~31us is ~500us of settling alone, so the scan is self-paced and this value
+// is inert. Once the settle is bisected back down, lower this to whatever the
+// scan actually costs so the pacing starts doing its job again.
+//
+// The original intent: 200us gives five scans per 1ms USB frame — enough for
+// the debounce filter to settle between polls without spinning the core flat
+// out. Note that DEBOUNCE_SCANS is counted in scans, not time, so a slower
+// scan lengthens the debounce window proportionally; at ~500us per scan the
+// 5-scan filter is ~2.5ms, which is past a single USB frame and will be felt
+// as latency until the settle comes back down.
 static const uint32_t SCAN_INTERVAL_US = 200;
 
 // Both of these keys held together reboots into the USB bootloader.
@@ -164,6 +197,7 @@ static void bootCombo() {
   settleDelay();
   uint32_t second = ~GPIOA->INDR & COL_MASK;
   GPIOB->BSHR = (1u << ROW_BITS[BOOT_KEY_B_ROW]);
+  settleDelay();  // leave the line high for the scan loop's first pass
 
   uint32_t sampled = first & second;
 
@@ -205,30 +239,28 @@ void setup() {
   for (uint8_t c = 0; c < NUM_COLS; c++) {
     pinMode(COL_PINS[c], INPUT_PULLUP);
   }
-  for (uint8_t r = 0; r < NUM_ROWS; r++) {
-    // PB10 must not go through pinMode(). The variant header also maps it to
-    // PIN_SERIAL_TX, and configuring it via the Arduino pin map clobbers the
-    // USB pin setup — the device then never enumerates at all. Bisected: every
-    // other row is fine, adding PB10 alone kills it. Set it up by hand instead.
-    if (ROW_PINS[r] == PB10) continue;
-    pinMode(ROW_PINS[r], OUTPUT);
-    digitalWrite(ROW_PINS[r], HIGH);  // idle high = not selected
-  }
-
-  // PB10 (ROW6), push-pull output, via the vendor driver rather than a
-  // read-modify-write of CFGHR.
+  // Rows, all eight, via the vendor driver rather than pinMode().
   //
-  // CFGHR is write-only on this part: reading it does not return the current
+  // Two reasons this does not use the Arduino pin map. PB10 must not go through
+  // pinMode() at all: the variant header also maps it to PIN_SERIAL_TX, and
+  // configuring it that way clobbers the USB pin setup — the device then never
+  // enumerates. Bisected: every other row is fine, adding PB10 alone kills it.
+  // And the core's pinMode() has no open-drain mode, which the rows need.
+  //
+  // GPIO_Init is also the only safe way to touch CFGHR. That register is
+  // write-only on this part: reading it does not return the current
   // configuration, which is why ch32x035_gpio.c keeps a RAM shadow (CFGHR_tmpB)
   // and writes the whole register from that. A `GPIOB->CFGHR = (GPIOB->CFGHR &
   // ~mask) | bits` here silently reconfigures every other pin 8-15 — including
-  // PB8 (ROW4) and PB9 (ROW7) — and the matrix goes dead.
-  GPIO_InitTypeDef pb10;
-  pb10.GPIO_Pin   = GPIO_Pin_10;
-  pb10.GPIO_Speed = GPIO_Speed_50MHz;
-  pb10.GPIO_Mode  = GPIO_Mode_Out_PP;
-  GPIO_Init(GPIOB, &pb10);
-  GPIOB->BSHR = (1u << 10);  // idle high, same as the rows above
+  // PB8 and PB9 — and the matrix goes dead.
+  for (uint8_t r = 0; r < NUM_ROWS; r++) {
+    GPIO_InitTypeDef row;
+    row.GPIO_Pin   = (uint16_t)(1u << ROW_BITS[r]);
+    row.GPIO_Speed = GPIO_Speed_50MHz;
+    row.GPIO_Mode  = GPIO_Mode_Out_OD;
+    GPIO_Init(GPIOB, &row);
+    GPIOB->BSHR = (1u << ROW_BITS[r]);  // idle released (floating), not selected
+  }
 
   // All matrix/report state is static, so it is already zero-initialised.
 
@@ -296,6 +328,12 @@ void loop() {
     // so invert: a 1 in `sampled` means pressed.
     uint32_t sampled = ~GPIOA->INDR & COL_MASK;
     GPIOB->BSHR = (1u << ROW_BITS[r]);  // release the row (deselect)
+
+    // Wait for the released row to actually rise before selecting the next one.
+    // Open-drain only stops pulling down; the line floats up through the column
+    // pull-up. Without this the previous row is still low during the next row's
+    // sample, and one held key reads as its whole column.
+    settleDelay();
 
 #ifdef DEBUG_ROW
     // Type the raw column bits for one row whenever they change, so a press
