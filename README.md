@@ -40,6 +40,17 @@ A few things this board considers:
 
 The advantages of all of the above result in a very well thought-out keyboard for travel and ergonomics. I'm quite proud of the design. I hope you enjoy it too!
 
+## What it looks like!!
+
+<img width="2880" height="2160" alt="stacked" src="https://github.com/user-attachments/assets/7e95d642-e8e0-4286-953f-141f833b5949" />
+
+<img width="2880" height="2160" alt="split" src="https://github.com/user-attachments/assets/ea07ad88-3854-4581-96cc-eca3bcb4df65" />
+
+
+### and... in ACTION! (sorry for messy desk lol)
+
+https://github.com/user-attachments/assets/db9cdffd-3058-46ad-9b0d-57498d875b57
+
 ## Some renders
 
 ![2](https://cdn.hackclub.com/019fa618-3c11-7e15-b919-1cba0bc6a83d/20260727-172029-edited.png)
