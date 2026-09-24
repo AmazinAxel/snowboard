@@ -115,7 +115,8 @@ static const uint32_t SCAN_INTERVAL_US = 200;
 // bit means pressed. Bitmasks instead of a bool[8][6] so "is anything down?"
 // is a single OR and the report loop can skip empty rows outright.
 static uint8_t keyDown[NUM_ROWS];
-static uint8_t lastRead[NUM_ROWS];               // last raw sample
+// Consecutive scans a key has read differently from its committed keyDown
+// state. Reaching DEBOUNCE_SCANS commits the new reading and resets to 0.
 static uint8_t stableCount[NUM_ROWS][NUM_COLS];
 static uint8_t heldLayer[NUM_ROWS][NUM_COLS];    // layer a key resolved on
 
@@ -347,14 +348,19 @@ void loop() {
       uint8_t pressed = (sampled >> COL_BITS[c]) & 1u;
       uint8_t bit = (1u << c);
 
-      if (pressed == ((lastRead[r] >> c) & 1u)) {
-        if (stableCount[r][c] < DEBOUNCE_SCANS) stableCount[r][c]++;
-      } else {
+      // Count consecutive scans that disagree with the committed state. A
+      // reading only takes effect once it has held for DEBOUNCE_SCANS in a
+      // row; a single stray sample resets the counter and changes nothing.
+      //
+      // lastRead is deliberately NOT updated on the first differing sample.
+      // Doing that made the counter measure "stable since the last flip"
+      // rather than "stable against the committed state", so one noise sample
+      // rearmed the count and a marginal line never reached the threshold —
+      // the key stayed down in keyDown forever, or never got there at all.
+      if (pressed == ((keyDown[r] >> c) & 1u)) {
+        stableCount[r][c] = 0;      // agrees with committed state, nothing to do
+      } else if (++stableCount[r][c] >= DEBOUNCE_SCANS) {
         stableCount[r][c] = 0;
-        lastRead[r] ^= bit;
-      }
-
-      if (stableCount[r][c] >= DEBOUNCE_SCANS) {
         if (pressed) keyDown[r] |= bit;
         else         keyDown[r] &= ~bit;
       }

@@ -46,7 +46,6 @@ The advantages of all of the above result in a very well thought-out keyboard fo
 
 <img width="2880" height="2160" alt="split" src="https://github.com/user-attachments/assets/ea07ad88-3854-4581-96cc-eca3bcb4df65" />
 
-
 ### and... in ACTION! (sorry for messy desk lol)
 
 https://github.com/user-attachments/assets/db9cdffd-3058-46ad-9b0d-57498d875b57
@@ -74,7 +73,7 @@ We use a very new chip which does not have support for those firmwares yet. The 
 
 To flash, just plug it into your computer over USB. If you have already flashed the firmware, just hold A when plugging in the board to enter boot mode.
 
-Clone the repo and go into the conifer/ folder. This is the custom firmware that Snowlayer runs on.
+Clone the repo and go into the conifer/ folder. This is the custom firmware that the keeb runs on!
 
 If you are running Nix, I highly recommend running `nix develop` to download deps and setup an environment for running the build.
 
@@ -112,9 +111,9 @@ Once I finish the firmware I'll attach a screenshot showing the layers and keybi
 
 You will need a 3D printer & filament (I recommend blue PLA) for the case. The four mounting holes are 2.2mm radius, 3mm deep, you will need mounting screws for those. The C-C interconnect MUST be Superspeed (like the item above) or else it won't have enough lines so the right half of the board won't work right.
 
-## For fabrication
+<!-- ## For fabrication -->
 
-I have supplied pre built JLCPCB gerbers in `jlcpcb`. Upload the snowlayer.zip there, select a white board, and you're done! Make sure you have all the parts from the BOM.
+<!-- I have supplied pre built JLCPCB gerbers in `jlcpcb`. Upload the snowlayer.zip there, select a white board, and you're done! Make sure you have all the parts from the BOM. -->
 
 ---
 

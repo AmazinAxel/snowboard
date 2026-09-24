@@ -56,14 +56,17 @@ enum { BASE = 0, SYM = 1, NUM = 2, ADJUST = 3 };
 // below maps a human-readable layout into it, so you only ever type the visual
 // arrangement.
 //
-// Both halves are in the same column order: COL0 is the inner column on each
-// hand, COL5 the outer. The right half is NOT electrically mirrored.
+// The right half is electrically mirrored: its COL0 is the *outer* column,
+// where the left hand's COL0 is the inner one. The macro reverses the right
+// half's columns to absorb that, so both halves are written here in the same
+// visual order — inner to outer left to right, as you read them on the board.
 //
-// This macro used to reverse the right half's columns, on the belief that the
-// right hand's COL0 was its outer column. It is not — the symptom was that the
-// whole right half typed mirrored (n->Enter, m->/, ,->., h->', j->;, k->l),
-// which is a clean col <-> 5-col permutation and the signature of applying a
-// flip to a matrix that was already in order.
+// A previous revision removed this flip, on the belief that the right half was
+// already in order. It is not: without the reversal the right half types
+// mirrored (h->', j->;, k->l, n->Enter, m->/, ,->.), a clean col <-> 5-col
+// permutation and the signature of a missing flip rather than a doubled one.
+// If that symptom ever reappears, check that it is missing here before adding
+// a second flip in main.cpp's scan — two flips cancel and land back at broken.
 // ---------------------------------------------------------------------------
 
 // clang-format off
@@ -76,10 +79,10 @@ enum { BASE = 0, SYM = 1, NUM = 2, ADJUST = 3 };
   /* ROW1 */ { L10, L11, L12, L13, L14, L15 },   \
   /* ROW2 */ { L20, L21, L22, L23, L24, L25 },   \
   /* ROW3 */ { KC_NO, KC_NO, KC_NO, L30, L31, L32 }, \
-  /* ROW4 */ { R00, R01, R02, R03, R04, R05 },   \
-  /* ROW5 */ { R10, R11, R12, R13, R14, R15 },   \
-  /* ROW6 */ { R20, R21, R22, R23, R24, R25 },   \
-  /* ROW7 */ { KC_NO, KC_NO, KC_NO, R30, R31, R32 } }
+  /* ROW4 */ { R05, R04, R03, R02, R01, R00 },   \
+  /* ROW5 */ { R15, R14, R13, R12, R11, R10 },   \
+  /* ROW6 */ { R25, R24, R23, R22, R21, R20 },   \
+  /* ROW7 */ { KC_NO, KC_NO, KC_NO, R32, R31, R30 } }
 
 static const uint8_t KEYMAP[NUM_LAYERS][8][6] = {
 
@@ -94,12 +97,17 @@ static const uint8_t KEYMAP[NUM_LAYERS][8][6] = {
   //   | Tab  Q    W    E    R    T      |   | Y    U    I    O    P    Bksp   |
   //   | Ctl  A    S    D    F    G      |   | H    J    K    L    ;    '      |
   //   | Sft  Z    X    C    V    B      |   | N    M    ,    .    /    Enter  |
-  //   `-----------. Esc  SYM  Spc       |   | Sft* Ctl* Alt* .----------------'
+  //   `-----------. Gui  SYM  Spc       |   | Sft* Ctl* Alt* .----------------'
+  //
+  // Gui is held, not one-shot: the OS shortcuts it exists for (Gui+L, Gui+Tab,
+  // tiling binds) are chords, and a window manager that repeats on hold needs
+  // the key genuinely down. Esc is not on BASE as a result — it lives on the
+  // same thumb under SYM and at L00 under NUM.
   [BASE] = LAYOUT(
     KC_TAB,  KC_Q, KC_W, KC_E, KC_R, KC_T,      KC_Y, KC_U, KC_I,    KC_O,   KC_P,    KC_BSPC,
     KC_LCTL, KC_A, KC_S, KC_D, KC_F, KC_G,      KC_H, KC_J, KC_K,    KC_L,   KC_SCLN, KC_QUOT,
     KC_LSFT, KC_Z, KC_X, KC_C, KC_V, KC_B,      KC_N, KC_M, KC_COMM, KC_DOT, KC_SLSH, KC_ENT,
-             KC_ESC, LAYER(SYM), KC_SPC,        KC_OSFT, LAYER(NUM), KC_OALT),
+             KC_LGUI, LAYER(SYM), KC_SPC,       KC_OSFT, LAYER(NUM), KC_OALT),
 
   // SYM — symbols under the home row.
   //
@@ -119,6 +127,9 @@ static const uint8_t KEYMAP[NUM_LAYERS][8][6] = {
   //   | Sft  \    :    <    >    ?      |   | [    ]    _    "    /    Enter  |
   //   `-----------. Esc  ---- Spc       |   | Sft* ADJ  Alt* .----------------'
   //
+  // Esc is explicit here, not KC_TRNS: BASE's thumb is Gui now, so falling
+  // through would give Gui on this layer and leave Esc unreachable.
+  //
   // The shifted characters here are plain keycodes — the firmware sends the
   // usage ID and the host's US layout applies Shift. Anything needing Shift is
   // written as the base key with KC_LSFT folded in by the host, which this
@@ -130,7 +141,7 @@ static const uint8_t KEYMAP[NUM_LAYERS][8][6] = {
     KC_GRV,  KC_1,    KC_2,    KC_3,    KC_4,    KC_5,       KC_6,    KC_7,    KC_8,    KC_MINS, KC_EQL,  KC_DEL,
     KC_TRNS, KC_OGUI, KC_OALT, KC_OSFT, KC_OCTL, KC_BSLS,    KC_9,    KC_0,    KC_LBRC, KC_RBRC, KC_EQL,  KC_GRV,
     KC_TRNS, KC_BSLS, KC_SCLN, KC_COMM, KC_DOT,  KC_SLSH,    KC_LBRC, KC_RBRC, KC_MINS, KC_QUOT, KC_SLSH, KC_TRNS,
-             KC_TRNS, KC_TRNS, KC_TRNS,                      KC_TRNS, LAYER(ADJUST), KC_TRNS),
+             KC_ESC,  KC_TRNS, KC_TRNS,                      KC_TRNS, LAYER(ADJUST), KC_TRNS),
 
   // NUM — numpad right, navigation left.
   //
