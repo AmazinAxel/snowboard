@@ -56,17 +56,14 @@ enum { BASE = 0, SYM = 1, NUM = 2, ADJUST = 3 };
 // below maps a human-readable layout into it, so you only ever type the visual
 // arrangement.
 //
-// The right half is electrically mirrored: its COL0 is the *outer* column,
-// where the left hand's COL0 is the inner one. The macro reverses the right
-// half's columns to absorb that, so both halves are written here in the same
-// visual order — inner to outer left to right, as you read them on the board.
+// Both halves are in the same column order: the right half is NOT reversed,
+// and each half is written here left to right as you read it on the board.
 //
-// A previous revision removed this flip, on the belief that the right half was
-// already in order. It is not: without the reversal the right half types
-// mirrored (h->', j->;, k->l, n->Enter, m->/, ,->.), a clean col <-> 5-col
-// permutation and the signature of a missing flip rather than a doubled one.
-// If that symptom ever reappears, check that it is missing here before adding
-// a second flip in main.cpp's scan — two flips cancel and land back at broken.
+// Do not add a column flip for the right half. That has been tried twice, and
+// verified on hardware it makes the right half type mirrored (hjkl;' comes out
+// as ';lkjh) — a clean col <-> 5-col permutation. One of those attempts went in
+// while the matrix was dead from an unrelated bug, so it was never tested; don't
+// trust a keymap change that hasn't been typed on a working board.
 // ---------------------------------------------------------------------------
 
 // clang-format off
@@ -79,10 +76,10 @@ enum { BASE = 0, SYM = 1, NUM = 2, ADJUST = 3 };
   /* ROW1 */ { L10, L11, L12, L13, L14, L15 },   \
   /* ROW2 */ { L20, L21, L22, L23, L24, L25 },   \
   /* ROW3 */ { KC_NO, KC_NO, KC_NO, L30, L31, L32 }, \
-  /* ROW4 */ { R05, R04, R03, R02, R01, R00 },   \
-  /* ROW5 */ { R15, R14, R13, R12, R11, R10 },   \
-  /* ROW6 */ { R25, R24, R23, R22, R21, R20 },   \
-  /* ROW7 */ { KC_NO, KC_NO, KC_NO, R32, R31, R30 } }
+  /* ROW4 */ { R00, R01, R02, R03, R04, R05 },   \
+  /* ROW5 */ { R10, R11, R12, R13, R14, R15 },   \
+  /* ROW6 */ { R20, R21, R22, R23, R24, R25 },   \
+  /* ROW7 */ { KC_NO, KC_NO, KC_NO, R30, R31, R32 } }
 
 static const uint8_t KEYMAP[NUM_LAYERS][8][6] = {
 

@@ -53,10 +53,11 @@ Two things here bite if you forget them:
    not exist on the G8U6 package, and an earlier revision of this table listing
    it as ROW1 is what shifted every row 1–3 by one pin. The tables in `main.cpp`
    encode the real mapping; don't "tidy" them into ascending order.
-2. **The right half is electrically mirrored.** COL0 is the *outer* column on
-   the right hand but the *inner* one on the left. The `LAYOUT()` macro in
-   `keymap.h` handles the flip, which is why you always edit the visual layout
-   and never the raw array.
+2. **The right half is *not* mirrored.** Both halves run COL0→COL5 left to
+   right as you look at the board, so `LAYOUT()` maps the right half straight
+   through. A column flip has been added twice, and on hardware it makes the
+   right half type mirrored (`hjkl;'` → `';lkjh`). Don't add it back unless
+   you've typed on a working board to check.
 
 Rows 0–3 are the left half, rows 4–7 the right. Rows 3 and 7 are the thumb
 clusters and only populate columns 3–5; the other three positions are `KC_NO`.
@@ -85,6 +86,10 @@ Four passes per loop, all state held as per-row bitmasks (bit *c* = column *c*):
 3. Resolve each held key against its latched layer, build the 6KRO HID report.
 4. Send only if the report changed, then pace the loop to `SCAN_INTERVAL_US`.
 
+Passes 2–4 live in `updateReport()`, which runs only on scans where the
+debounce committed a change. Most scans are just the matrix read and the
+pacing wait.
+
 Two details worth knowing before changing this:
 
 - **Keys latch their layer on press** (`heldLayer`). Releasing a layer key while
@@ -99,13 +104,15 @@ All in `main.cpp`, all with the physical reason to change them in a comment:
 | Constant             | Default | Turn it when                              |
 | -------------------- | ------- | ----------------------------------------- |
 | `DEBOUNCE_SCANS`     | 5       | Worn switches chatter → raise             |
-| `MATRIX_SETTLE_CYCLES` | 150   | Far half phantom-presses → raise          |
-| `SCAN_INTERVAL_US`   | 200     | Want lower latency → lower; less current → raise |
+| `MATRIX_SETTLE_CYCLES` | 150   | One key reads as its whole column, or far half phantom-presses → raise |
+| `SCAN_INTERVAL_US`   | 200     | Want faster debounce → lower |
 
-`SCAN_INTERVAL_US` is deliberately not zero. The host only collects a report
-every 1ms, so free-running the scan burns current re-reading pins nobody asks
-about. 200µs gives five scans per USB frame — debounce still settles inside a
-single frame, so the pacing costs no perceptible latency.
+`MATRIX_SETTLE_CYCLES` counts busy-loop iterations, not CPU cycles; each
+iteration takes a few cycles. 16 settles per scan have to fit inside
+`SCAN_INTERVAL_US`.
+
+`SCAN_INTERVAL_US` exists to make `DEBOUNCE_SCANS` a fixed amount of time:
+5 scans × 200µs ≈ 1ms. It saves no power, because the wait is a busy loop.
 
 ## Editing the keymap
 
@@ -138,15 +145,13 @@ Current footprint: ~13KB flash (21% of 62KB), ~1.3KB RAM (7% of 20KB).
 
 ### Getting into the bootloader
 
-Two ways, both firmware-dependent:
-
-1. **Hold A while plugging the board in.** Checked in `setup()` before the scan
-   loop starts, so it survives a broken keymap or a hung `loop()`. Verified
-   working: a normal plug-in enumerates `16c0:27e5`, holding A gives
-   `1a86:55e0`. This is the everyday path — `upload_protocol = wchisp`.
-2. **Hold Q + A on a running board.** Currently *disabled* in `main.cpp`; it
-   would reboot the board mid-typing whenever that combo is hit.
-3. **WCH-LinkE** on SWD, if USB is unavailable — set
+1. **Hold A while plugging the board in.** Checked in `setup()` by
+   `bootKeyCheck()` before the scan loop starts, so it survives a broken keymap
+   or a hung `loop()`. Verified working: a normal plug-in enumerates
+   `16c0:27e5`, holding A gives `1a86:55e0`. This is the everyday path —
+   `upload_protocol = isp`. There is deliberately no key combo on a running
+   board; it would reboot mid-typing whenever the combo came up.
+2. **WCH-LinkE** on SWD, if USB is unavailable — set
    `upload_protocol = wch-link` in `platformio.ini`. This is the only path that
    does not depend on the firmware working, and the one to reach for after a
    bad flash. Verified working on this board:
@@ -162,16 +167,16 @@ Two ways, both firmware-dependent:
    ID. `wlink erase` returns flash to blank, which restores the boot-ROM
    fallthrough and makes `wchisp` work over USB again.
 
-Both USB paths call `SystemReset_StartMode(Start_Mode_BOOT)` and then reset.
+The A path calls `SystemReset_StartMode(Start_Mode_BOOT)` and then resets.
 Do *not* jump to `0x1FFFF000` directly — the boot ROM expects a chip in its
 reset state and hangs if USB and the PLL are already running.
 
-The boot keys are checked against *physical matrix positions*, not keycodes, so
-they work on every layer. A is `[1][1]`, Q is `[0][1]`; if you ever move them in
-the keymap, update `BOOT_KEY_*` in `main.cpp` to match — `check_keymap.sh` will
+The boot key is checked against its *physical matrix position*, not a keycode,
+so it works whatever the keymap says. A is `[1][1]`; if you ever move it in the
+keymap, update `BOOT_KEY_*` in `main.cpp` to match — `check_keymap.sh` will
 fail loudly if they drift apart.
 
-`bootCombo()` requires A's column bit set but *not* all six columns. The guard
+`bootKeyCheck()` requires A's column bit set but *not* all six columns. The guard
 was originally an exact match on A alone, which made the hatch impossible to
 trigger on a partially soldered board: an unpopulated switch position can float,
 and any stray bit on that row failed the comparison. The all-columns-set case is
@@ -185,7 +190,7 @@ two pads on the top right" — that is **wrong and damaging**. Those pads are
 `SW41`, a `SolderJumper_2_Open` wired between a matrix key node and `+5V`;
 shorting it drives 5V into a GPIO/diode node. It has never been a boot path.
 
-Consequence: once flash is non-blank, recovery depends on the firmware's Q+A
+Consequence: once flash is non-blank, recovery depends on the firmware's hold-A
 path or a WCH-LinkE. While flash *is* blank the chip falls through to the boot
 ROM on every plug-in, which is why `wchisp` works out of the box on a virgin
 board. Worth routing NRST to a pad on the next PCB spin.
@@ -205,3 +210,27 @@ README.
   `digitalWrite`/`digitalRead` in the scan path; the Arduino wrappers do a
   pin-map lookup per call. Likewise avoid `delayMicroseconds()` there — it does
   64-bit division on a core with no hardware divider.
+
+### GPIO setup traps
+
+Every one of these has killed the whole matrix at least once. The symptom is
+always the same: the board enumerates fine, but no key ever sends a report and
+holding A at plug-in does nothing.
+
+- **`GPIO_Init()` does not enable the port clock.** `pinMode()` does, as a side
+  effect. The rows go through `GPIO_Init()`, so `setup()` must call
+  `RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE)` first. Without it,
+  every write to GPIOB is dropped and no row ever pulls low. This is how
+  `561fb96` broke the board: it moved the last GPIOB pins off `pinMode()`, and
+  the clock those calls had been enabling went with them. Any port you set up
+  purely through the vendor driver needs its clock enabled by hand.
+- **`CFGHR` is write-only.** Never read-modify-write it; go through
+  `GPIO_Init()`, which keeps a RAM shadow.
+- **PB10 must not go through `pinMode()`** — it is also `PIN_SERIAL_TX` in the
+  variant header.
+- **Rows are push-pull.** With a diode on every switch a deselected row driven
+  high can't back-feed a column, so open-drain buys nothing, and push-pull
+  drives the release edge instead of waiting on the pull-up RC.
+
+If the matrix goes dead after a GPIO change, check the port clock first, and
+make sure `upload_protocol` really flashed (see `platformio.ini`).

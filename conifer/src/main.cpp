@@ -13,14 +13,10 @@
 #include "keymap.h"
 
 // --- Wiring -----------------------------------------------------------------
-// Rows are driven (open-drain outputs), columns are sensed (inputs with pull-up).
+// Rows are driven (push-pull outputs), columns are sensed (inputs with pull-up).
 //
-// Open-drain, not push-pull. A push-pull row actively drives 3.3V when it is
-// deselected, which fights the column pull-ups through every switch on that
-// row. On the long interconnect runs that fight leaks enough onto a column to
-// read as pressed while a *different* row is selected — one key then reports
-// every key in its column. Open-drain makes a deselected row float, so only
-// the selected row can pull a column down.
+// Push-pull, as in the last known-working revision. A deselected row at 3.3V
+// cannot fight the column pull-ups: the diode is reverse-biased that way.
 // This is ROW2COL in QMK terms, and it is set by the diode orientation on the
 // PCB: the cathode sits at the row (D1 pin 1 = ROW0, pin 2 = anode = the switch
 // side). Current can therefore only flow switch -> row, so the row is the end
@@ -30,57 +26,48 @@
 // the registers directly: one write to select a row, one read to sample all
 // six columns at once. Arduino's digitalRead/digitalWrite would do a pin-map
 // lookup per pin — 48 of them per full scan.
+//
+// Columns are PA0..PA5, so bit c of GPIOA->INDR is column c directly and a
+// sampled row needs no remapping.
 static const uint8_t COL_PINS[6] = { PA0, PA1, PA2, PA3, PA4, PA5 };
-static const uint8_t ROW_PINS[8] = { PB0, PB3, PB4, PB6, PB8, PB7, PB10, PB9 };
-//                        ROW index:  0    1    2    3    4    5    6     7
-// Taken from the MCU pad -> net mapping in snowlayer.kicad_pcb, not from pin
-// order: ROW0=pad13, ROW1=pad14, ROW2=pad15, ROW3=pad17, ROW4=pad19,
+
+// Row bit positions on GPIOB (ROW0..ROW7 = PB0, PB3, PB4, PB6, PB8, PB7, PB10,
+// PB9). Taken from the MCU pad -> net mapping in snowlayer.kicad_pcb, not from
+// pin order: ROW0=pad13, ROW1=pad14, ROW2=pad15, ROW3=pad17, ROW4=pad19,
 // ROW5=pad18, ROW6=pad21, ROW7=pad20. Two traps in there — ROW4/ROW5 are
 // swapped relative to pad order (ROW5=PB7 on pad 18, ROW4=PB8 on pad 19), and
 // PB1 is not a row at all: it does not exist on the G8U6 package.
-
-// GPIO bit positions, in the same order as the tables above.
-static const uint8_t COL_BITS[6] = { 0, 1, 2, 3, 4, 5 };          // PA0..PA5
-static const uint8_t ROW_BITS[8] = { 0, 3, 4, 6, 8, 7, 10, 9 };   // PB pins
-
-// Mask of every column bit, so one INDR read covers the whole row.
-// Columns are PA0..PA5, so this is simply bits 0-5.
-#define COL_MASK 0x3Fu
+static const uint8_t ROW_BITS[8] = { 0, 3, 4, 6, 8, 7, 10, 9 };
 
 #define NUM_ROWS 8
 #define NUM_COLS 6
-#define COL_ALL  0x3F  // bits 0..5, one per column
+#define COL_MASK 0x3Fu  // bits 0..5, one per column
 
 // --- Tuning -----------------------------------------------------------------
 // Debounce: a key must read the same for this many consecutive scans before
-// the change is reported. A scan is ~100us, so 5 scans is ~0.5ms — well under
-// the 1ms USB polling interval, so debouncing costs no perceptible latency.
+// the change is reported. Scans are paced to SCAN_INTERVAL_US, so 5 scans is
+// ~1ms — about one USB poll, so debouncing costs no perceptible latency.
 // Raise this if you get chatter from worn switches.
 // ponytail: per-key counters, plenty for 42 keys; no fancier algorithm needed.
 static const uint8_t DEBOUNCE_SCANS = 5;
 
-// Settle time for a row line, in CPU cycles at 48MHz (~21ns each). Used both
-// after a row is driven low and after it is released. The interconnect between
-// halves is the longest run, so this is the knob to turn if the far half ever
-// reports phantom presses.
+// Settle time for a row line, in busy-loop iterations (a few cycles each at
+// 48MHz, so 150 is a handful of microseconds). Used both after a row is driven
+// low and after it is released. The interconnect between halves is the longest
+// run, so this is the knob to turn if the far half ever reports phantom presses.
 //
-// This is sized for the RELEASE edge, which is far slower than the drive edge
-// and is what sets the floor. An open-drain row does not drive high when it is
-// deselected — it floats, and the line returns high only through the column
-// pull-up, the diode, and the switch. That RC is much slower than the active
-// pull-down, and a row still sitting low when the next row is sampled keeps
-// pulling its pressed key's column down, so that press is attributed to every
-// row scanned afterwards. The symptom is one key reporting as its entire
-// column, worst on row 4 (the right half's top row, the far end of the
-// interconnect).
+// The release settle matters too: a column pulled low through a pressed key
+// only recovers through its pull-up once the row goes high, and sampling the
+// next row before then attributes that press to it too. The symptom is one key
+// reporting as its entire column, worst on row 4 (the right half's top row, the
+// far end of the interconnect). Raise this if that appears.
 //
-// 1500 cycles is ~31us, which is deliberately generous: it is a diagnostic
-// value, not a tuned one. Bisect downward once the fault is confirmed gone and
-// drop SCAN_INTERVAL_US to match.
+// Two settles per row x 8 rows must stay under SCAN_INTERVAL_US, or the scan
+// stops being paced and the debounce window stretches with it.
 //
 // Arduino's delayMicroseconds() does 64-bit division on a core with no
 // hardware divider, which costs more than the delay itself at this scale.
-static const uint32_t MATRIX_SETTLE_CYCLES = 1500;
+static const uint32_t MATRIX_SETTLE_CYCLES = 150;
 
 static inline void settleDelay() {
   for (uint32_t i = 0; i < MATRIX_SETTLE_CYCLES; i++) __asm__ volatile("nop");
@@ -88,27 +75,15 @@ static inline void settleDelay() {
 
 // Target time for one full matrix scan, in microseconds.
 //
-// This is a floor, not a period: if a scan already takes longer than this the
-// pacing loop at the end of loop() falls straight through and does nothing.
-// That is the case at the current MATRIX_SETTLE_CYCLES — 8 rows x 2 settles x
-// ~31us is ~500us of settling alone, so the scan is self-paced and this value
-// is inert. Once the settle is bisected back down, lower this to whatever the
-// scan actually costs so the pacing starts doing its job again.
-//
-// The original intent: 200us gives five scans per 1ms USB frame — enough for
-// the debounce filter to settle between polls without spinning the core flat
-// out. Note that DEBOUNCE_SCANS is counted in scans, not time, so a slower
-// scan lengthens the debounce window proportionally; at ~500us per scan the
-// 5-scan filter is ~2.5ms, which is past a single USB frame and will be felt
-// as latency until the settle comes back down.
+// This is what makes DEBOUNCE_SCANS a fixed time rather than whatever a scan
+// happens to cost: 200us gives five scans per 1ms USB frame. It is a floor, not
+// a period — a scan that already takes longer falls straight through the wait.
 static const uint32_t SCAN_INTERVAL_US = 200;
 
-// Both of these keys held together reboots into the USB bootloader.
-// Physical positions, not keycodes, so they work on any layer.
-#define BOOT_KEY_A_ROW 0  // Q  (ROW0, COL1)
-#define BOOT_KEY_A_COL 1
-#define BOOT_KEY_B_ROW 1  // A  (ROW1, COL1)
-#define BOOT_KEY_B_COL 1
+// Held at plug-in, this key drops the board into the USB bootloader. A physical
+// position, not a keycode, so it works whatever the keymap says: A at ROW1/COL1.
+#define BOOT_KEY_ROW 1
+#define BOOT_KEY_COL 1
 
 // --- State ------------------------------------------------------------------
 // Debounced matrix state, one bit per column (bit c = column c) per row. A set
@@ -119,8 +94,6 @@ static uint8_t keyDown[NUM_ROWS];
 // state. Reaching DEBOUNCE_SCANS commits the new reading and resets to 0.
 static uint8_t stableCount[NUM_ROWS][NUM_COLS];
 static uint8_t heldLayer[NUM_ROWS][NUM_COLS];    // layer a key resolved on
-
-#define KEY_IS_DOWN(r, c) ((keyDown[(r)] >> (c)) & 1u)
 
 static KeyReport report;
 static KeyReport lastReport;
@@ -151,35 +124,20 @@ static uint8_t prevKeyDown[NUM_ROWS];
 // comparison correct across the micros() rollover.
 static uint32_t lastScanUs;
 
-// Reboot into the CH32X035 factory USB bootloader so the board can be
-// re-flashed with wchisp over USB-C, no button shorting required.
+// Power-on recovery: if A is held at plug-in, reboot into the CH32X035 factory
+// USB bootloader so the board can be re-flashed with wchisp over USB-C.
+//
+// Reads the matrix directly rather than going through the debounced state,
+// because this runs before the scan loop exists. It depends only on the GPIO
+// setup and a reset, so it still works if the keymap is wrong or loop() hangs.
+// A stuck or shorted A at power-on drops you to the bootloader instead of the
+// keyboard, which a replug undoes.
 //
 // Do NOT jump to 0x1FFFF000 directly: the bootloader expects the chip in its
 // reset state, and with USB and the PLL already running it hangs. The supported
 // path is to set the BOOT start-mode bit in FLASH->STATR and then reset, so the
 // boot ROM runs from a clean chip. The bit is sticky only across this reset.
-static void jumpToBootloader() {
-  Keyboard.releaseAll();
-  Keyboard.end();
-  delay(50);  // let the host process the key release before we vanish
-
-  __disable_irq();
-  SystemReset_StartMode(Start_Mode_BOOT);
-  NVIC_SystemReset();
-  while (1) {}  // not reached
-}
-
-// Power-on recovery check: is A held right now?
-//
-// Reads the matrix directly rather than going through the debounced state,
-// because this runs before the scan loop exists.
-//
-// Only A, not the Q+A the running board uses. This is the last way back in if
-// a flash goes bad, so it is worth making as easy to hit as possible — one key
-// held through a replug is far more reliable than two, especially with jumper
-// wires on a bare PCB. The cost is that a stuck or shorted A at power-on drops
-// you to the bootloader instead of the keyboard, which a replug undoes.
-static void bootCombo() {
+static void bootKeyCheck() {
   // Let the column pull-ups charge the lines before the first sample. The rows
   // were configured microseconds ago and an undriven column still reads low
   // until its pull-up wins, which would look like every key held at once.
@@ -187,30 +145,25 @@ static void bootCombo() {
 
   // Sample twice with the row released in between. A real held key reads
   // pressed both times; a line that has not settled does not.
-  GPIOB->BCR = (1u << ROW_BITS[BOOT_KEY_B_ROW]);  // select A's row
-  settleDelay();
-  uint32_t first = ~GPIOA->INDR & COL_MASK;
-  GPIOB->BSHR = (1u << ROW_BITS[BOOT_KEY_B_ROW]);  // release it
-
-  settleDelay();
-
-  GPIOB->BCR = (1u << ROW_BITS[BOOT_KEY_B_ROW]);
-  settleDelay();
-  uint32_t second = ~GPIOA->INDR & COL_MASK;
-  GPIOB->BSHR = (1u << ROW_BITS[BOOT_KEY_B_ROW]);
-  settleDelay();  // leave the line high for the scan loop's first pass
-
-  uint32_t sampled = first & second;
+  const uint32_t row = 1u << ROW_BITS[BOOT_KEY_ROW];
+  uint32_t sampled = COL_MASK;
+  for (uint8_t i = 0; i < 2; i++) {
+    GPIOB->BCR = row;   // select A's row
+    settleDelay();
+    sampled &= ~GPIOA->INDR;
+    GPIOB->BSHR = row;  // release it
+    settleDelay();      // leaves the line high for the scan loop's first pass
+  }
 
   // A must read pressed. Deliberately not an exact match on A alone: the
   // neighbouring switches on this row may not be soldered yet, and an unpopulated
   // position can float. Requiring exactly one bit made the hatch impossible to
   // trigger on a partially built board.
-  if (!(sampled & (1u << COL_BITS[BOOT_KEY_B_COL]))) return;
+  if (!(sampled & (1u << BOOT_KEY_COL))) return;
 
   // Still refuse the degenerate case: every column set means the matrix is
   // misreading rather than the user holding the whole row. That reading is what
-  // caused the boot loop this check was disabled for.
+  // once caused a boot loop.
   if (sampled == COL_MASK) return;
 
   // USB has been initialised by the time this runs, but nothing is enumerated
@@ -242,11 +195,10 @@ void setup() {
   }
   // Rows, all eight, via the vendor driver rather than pinMode().
   //
-  // Two reasons this does not use the Arduino pin map. PB10 must not go through
-  // pinMode() at all: the variant header also maps it to PIN_SERIAL_TX, and
-  // configuring it that way clobbers the USB pin setup — the device then never
-  // enumerates. Bisected: every other row is fine, adding PB10 alone kills it.
-  // And the core's pinMode() has no open-drain mode, which the rows need.
+  // PB10 must not go through pinMode() at all: the variant header also maps it
+  // to PIN_SERIAL_TX, and configuring it that way clobbers the USB pin setup —
+  // the device then never enumerates. Bisected: every other row is fine, adding
+  // PB10 alone kills it.
   //
   // GPIO_Init is also the only safe way to touch CFGHR. That register is
   // write-only on this part: reading it does not return the current
@@ -254,30 +206,26 @@ void setup() {
   // and writes the whole register from that. A `GPIOB->CFGHR = (GPIOB->CFGHR &
   // ~mask) | bits` here silently reconfigures every other pin 8-15 — including
   // PB8 and PB9 — and the matrix goes dead.
+  //
+  // GPIO_Init does not enable the port clock; pinMode() did that as a side
+  // effect. No GPIOB pin goes through pinMode() any more, so without this the
+  // port stays unclocked, every row write is dropped, and no key ever reads.
+  RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE);
   for (uint8_t r = 0; r < NUM_ROWS; r++) {
     GPIO_InitTypeDef row;
     row.GPIO_Pin   = (uint16_t)(1u << ROW_BITS[r]);
     row.GPIO_Speed = GPIO_Speed_50MHz;
-    row.GPIO_Mode  = GPIO_Mode_Out_OD;
+    row.GPIO_Mode  = GPIO_Mode_Out_PP;
     GPIO_Init(GPIOB, &row);
-    GPIOB->BSHR = (1u << ROW_BITS[r]);  // idle released (floating), not selected
+    GPIOB->BSHR = (1u << ROW_BITS[r]);  // idle high, not selected
   }
 
   // All matrix/report state is static, so it is already zero-initialised.
 
-  // Recovery hatch. Hold the boot combo while plugging the board in and we go
-  // straight to the bootloader, before USB or the scan loop start. That makes
-  // this the one path that still works if the keymap is wrong or loop() hangs:
-  // the only things it depends on are the GPIO setup above and a reset.
-  //
-  // Read raw, with no debounce — the key has been held since power-on, so the
-  // line is long settled, and a stray sample here only costs a replug.
-  //
-  // Was disabled for a while because it fired on every boot. The cause was the
-  // scan direction: the old code drove a column and read rows, which against
-  // this board's ROW2COL diodes reads as every key held. With the direction
-  // fixed and the exact-match guard in bootCombo(), it is safe to re-enable.
-  bootCombo();
+  // Recovery hatch: hold A while plugging in to reach the bootloader. Read raw,
+  // with no debounce — the key has been held since power-on, so the line is
+  // long settled, and a stray sample here only costs a replug.
+  bootKeyCheck();
 }
 
 #ifdef DEBUG_ROW
@@ -319,65 +267,8 @@ static void debugRow(uint8_t r, uint32_t sampled) {
 }
 #endif
 
-void loop() {
-  // Pass 1: scan the whole matrix and update the debounced state.
-  for (uint8_t r = 0; r < NUM_ROWS; r++) {
-    GPIOB->BCR = (1u << ROW_BITS[r]);   // drive this row LOW (select)
-    settleDelay();
-
-    // Sample all six columns in one read. A pressed key pulls its column LOW,
-    // so invert: a 1 in `sampled` means pressed.
-    uint32_t sampled = ~GPIOA->INDR & COL_MASK;
-    GPIOB->BSHR = (1u << ROW_BITS[r]);  // release the row (deselect)
-
-    // Wait for the released row to actually rise before selecting the next one.
-    // Open-drain only stops pulling down; the line floats up through the column
-    // pull-up. Without this the previous row is still low during the next row's
-    // sample, and one held key reads as its whole column.
-    settleDelay();
-
-#ifdef DEBUG_ROW
-    // Type the raw column bits for one row whenever they change, so a press
-    // that never reaches the host can still be seen at the pin. Prints e.g.
-    // "5:02 " for column 1 down on row 5. Undebounced and deliberately before
-    // any keymap lookup: this reports what the MCU read, nothing further.
-    if (r == DEBUG_ROW) debugRow(r, sampled);
-#endif
-
-    for (uint8_t c = 0; c < NUM_COLS; c++) {
-      uint8_t pressed = (sampled >> COL_BITS[c]) & 1u;
-      uint8_t bit = (1u << c);
-
-      // Count consecutive scans that disagree with the committed state. A
-      // reading only takes effect once it has held for DEBOUNCE_SCANS in a
-      // row; a single stray sample resets the counter and changes nothing.
-      //
-      // lastRead is deliberately NOT updated on the first differing sample.
-      // Doing that made the counter measure "stable since the last flip"
-      // rather than "stable against the committed state", so one noise sample
-      // rearmed the count and a marginal line never reached the threshold —
-      // the key stayed down in keyDown forever, or never got there at all.
-      if (pressed == ((keyDown[r] >> c) & 1u)) {
-        stableCount[r][c] = 0;      // agrees with committed state, nothing to do
-      } else if (++stableCount[r][c] >= DEBOUNCE_SCANS) {
-        stableCount[r][c] = 0;
-        if (pressed) keyDown[r] |= bit;
-        else         keyDown[r] &= ~bit;
-      }
-    }
-  }
-
-  // Escape hatch: Q + A together drops to the bootloader.
-  //
-  // DISABLED alongside the power-on check: if the matrix ever reads all-down,
-  // this fires on the first scan and resets the board before the host finishes
-  // enumerating. Recovery is the WCH-LinkE on TP1/TP2 until the scan is trusted.
-  // if (KEY_IS_DOWN(BOOT_KEY_A_ROW, BOOT_KEY_A_COL) &&
-  //     KEY_IS_DOWN(BOOT_KEY_B_ROW, BOOT_KEY_B_COL)) {
-  //   jumpToBootloader();
-  // }
-  (void)jumpToBootloader;
-
+// Passes 2-4: resolve the debounced matrix into a HID report and send it.
+static void updateReport() {
   // Pass 2: collect held layers. Layer keys are evaluated before anything else
   // so that pressing a layer key and a key under it in the same scan resolves
   // on the new layer.
@@ -407,7 +298,7 @@ void loop() {
     uint8_t down = keyDown[r];
 
     // Drop the latch on every key in this row that is no longer held.
-    uint8_t released = ~down & COL_ALL;
+    uint8_t released = ~down & COL_MASK;
     while (released) {
       uint8_t c = __builtin_ctz(released);
       released &= released - 1;
@@ -477,13 +368,61 @@ void loop() {
     Keyboard.sendReport(&report);
     lastReport = report;
   }
+}
 
-  // Pace the scan. The host only collects a report every 1ms (bInterval=1), so
-  // scanning flat out just burns current re-reading pins nobody will ask about.
-  // At SCAN_INTERVAL_US the debounce window (DEBOUNCE_SCANS scans) still closes
-  // inside a single USB frame, so this costs no perceptible latency.
-  // ponytail: a plain wait; WFI + a timer IRQ would idle the core instead, add
-  // that if measured idle current actually matters.
+void loop() {
+  bool changed = false;
+
+  // Pass 1: scan the whole matrix and update the debounced state.
+  for (uint8_t r = 0; r < NUM_ROWS; r++) {
+    GPIOB->BCR = (1u << ROW_BITS[r]);   // drive this row LOW (select)
+    settleDelay();
+
+    // Sample all six columns in one read. A pressed key pulls its column LOW,
+    // so invert: a 1 in `sampled` means pressed.
+    uint32_t sampled = ~GPIOA->INDR & COL_MASK;
+    GPIOB->BSHR = (1u << ROW_BITS[r]);  // release the row (deselect)
+
+    // Wait for the released row to actually rise before selecting the next one.
+    // The column recovers only through its pull-up. Without this the previous
+    // row's pressed key still holds its column low during the next row's
+    // sample, and one held key reads as its whole column.
+    settleDelay();
+
+#ifdef DEBUG_ROW
+    // Type the raw column bits for one row whenever they change, so a press
+    // that never reaches the host can still be seen at the pin. Prints e.g.
+    // "5:02 " for column 1 down on row 5. Undebounced and deliberately before
+    // any keymap lookup: this reports what the MCU read, nothing further.
+    if (r == DEBUG_ROW) debugRow(r, sampled);
+#endif
+
+    // Count consecutive scans that disagree with the committed state. A reading
+    // only takes effect once it has held for DEBOUNCE_SCANS in a row; a single
+    // agreeing sample resets the counter and changes nothing. Counting against
+    // the committed state, not the last sample, matters: counting "stable since
+    // the last flip" let one noise sample rearm the count, so a marginal line
+    // never reached the threshold and the key stuck down or never registered.
+    uint8_t diff = (uint8_t)sampled ^ keyDown[r];
+    for (uint8_t c = 0; c < NUM_COLS; c++) {
+      if (!((diff >> c) & 1u)) {
+        stableCount[r][c] = 0;      // agrees with committed state
+      } else if (++stableCount[r][c] >= DEBOUNCE_SCANS) {
+        stableCount[r][c] = 0;
+        keyDown[r] ^= (1u << c);
+        changed = true;
+      }
+    }
+  }
+
+  // The report is a pure function of keyDown plus the one-shot state, and that
+  // state only moves on a keyDown change — so an unchanged matrix, which is
+  // nearly every scan, skips report building entirely.
+  if (changed) updateReport();
+
+  // Pace the scan, so DEBOUNCE_SCANS is a fixed time. This busy-wait saves no
+  // current — the core spins either way; WFI + a timer IRQ would be needed for
+  // that, and isn't worth it on a USB-powered board.
   while (micros() - lastScanUs < SCAN_INTERVAL_US) { }
   lastScanUs = micros();
 }
