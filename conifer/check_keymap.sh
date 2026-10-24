@@ -47,8 +47,8 @@ expect 4 "Y U I O P Bsp"          1c 18 0c 12 13 2a
 expect 5 "H J K L ; '"            0b 0d 0e 0f 33 34
 expect 6 "N M , . / Ent"          11 10 36 37 38 28
 # Thumb rows: only cols 3-5 are populated.
-expect 3 "-- -- -- Gui SYM Spc"      00 00 00 e3 "(0xf0|(sym))" 2c
-expect 7 "-- -- -- Sft* NUM Alt*"    00 00 00 "((0xe1)|0x08)" "(0xf0|(num))" "((0xe2)|0x08)"
+expect 3 "-- -- -- Spc SYM Gui"      00 00 00 2c "(0xf0|(sym))" e3
+expect 7 "-- -- -- Alt NUM Spc"      00 00 00 e2 "(0xf0|(num))" 2c
 
 # The power-on boot key must be A, at BOOT_KEY_ROW/COL in src/main.cpp.
 echo "Boot key (A):"

@@ -116,6 +116,11 @@ static KeyReport lastReport;
 static uint8_t oneshotMods;
 static uint8_t oneshotUsed;
 
+// Shift for an S(k) key follows the most recently pressed key only ("weak"
+// shift). Applying it whenever any S(k) key is held turns a roll like ( then -
+// into ( then _, because the host reads the new key against the report's mods.
+static bool weakShift;
+
 // Held-key state for the one-shot edge detection: bit c per row, tracking
 // which keys were down on the previous scan.
 static uint8_t prevKeyDown[NUM_ROWS];
@@ -335,6 +340,8 @@ static void updateReport() {
         // rather than re-arming it forever.
         if (isEdge) oneshotMods ^= OSM_BIT(k);
       } else if (slot < 6) {
+        if (isEdge) weakShift = IS_SHIFTED(k);
+        if (IS_SHIFTED(k)) k &= 0x7F;
         report.keys[slot++] = k;
         anyNormalKeyDown = true;
         // This key consumes whatever is armed. Marking rather than clearing:
@@ -356,6 +363,8 @@ static void updateReport() {
   // in before the clear, so the final report of a tapped-Shift-then-letter
   // sequence still carries Shift alongside the letter.
   report.modifiers |= oneshotMods;
+  if (!anyNormalKeyDown) weakShift = false;
+  if (weakShift) report.modifiers |= MOD_BIT(KC_LSFT);
   if (!anyNormalKeyDown) {
     oneshotMods &= ~oneshotUsed;
     oneshotUsed = 0;

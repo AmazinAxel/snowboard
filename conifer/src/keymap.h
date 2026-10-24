@@ -3,18 +3,14 @@
 // Physical layout (42 keys, 3x6 per half + 3 thumbs per half):
 //
 //   ,-----------------------------.        ,-----------------------------.
-//   | L00 L01 L02 L03 L04 L05     |        | R00 R01 R02 R03 R04 R05     |
-//   | L10 L11 L12 L13 L14 L15     |        | R10 R11 R12 R13 R14 R15     |
-//   | L20 L21 L22 L23 L24 L25     |        | R20 R21 R22 R23 R24 R25     |
-//   `-------------. L30 L31 L32   |        | R30 R31 R32 .---------------'
-//                 `---------------'        `-------------'
+//   |     L00 L01 L02 L03 L04 L05 |        | R00 R01 R02 R03 R04 R05     |
+//   |     L10 L11 L12 L13 L14 L15 |        | R10 R11 R12 R13 R14 R15     |
+//   |     L20 L21 L22 L23 L24 L25 |        | R20 R21 R22 R23 R24 R25     |
+//   `---------------. L30 L31 L32 |        | R30 R31 R32 .---------------'
+//                   `-------------'        `-------------'
 //
 // Keycodes: use the KC_* names from keycodes.h. KC_NO = dead key.
 // LAYER(n) on a key = momentary layer n while held (like QMK's MO(n)).
-// KC_OSFT / KC_OCTL / KC_OALT / KC_OGUI are one-shot modifiers: tap one, then
-// tap a key, and the modifier applies to that key only. Holding one still acts
-// as a plain held modifier.
-//
 // Modifiers get their own keys — no mod-tap, no tap dance. Both need a timing
 // window to decide what a key meant, and a timing window is something to
 // mistime. That is what the six thumb keys are for.
@@ -40,14 +36,10 @@
 #include "keycodes.h"
 
 // Number of layers. Keep this in sync with the KEYMAP array below.
-#define NUM_LAYERS 4
+#define NUM_LAYERS 3
 
 // Layer indices, for readability in LAYER().
-//
-// ADJUST is entered by holding SYM and NUM together — it has no key of its
-// own. resolveKey() searches from the highest layer down, so a position that
-// is live on ADJUST wins over the same position on SYM or NUM.
-enum { BASE = 0, SYM = 1, NUM = 2, ADJUST = 3 };
+enum { BASE = 0, SYM = 1, NUM = 2 };
 
 // ---------------------------------------------------------------------------
 // The keymap. One block per layer, laid out exactly like the physical board.
@@ -66,6 +58,10 @@ enum { BASE = 0, SYM = 1, NUM = 2, ADJUST = 3 };
 // trust a keymap change that hasn't been typed on a working board.
 // ---------------------------------------------------------------------------
 
+// The one exception is the right thumb row: it is wired COL5..COL3 left to
+// right, so ROW7 takes R32 R31 R30. Verified on hardware (Space and Alt came
+// out swapped without it).
+//
 // clang-format off
 #define LAYOUT( \
     L00, L01, L02, L03, L04, L05,   R00, R01, R02, R03, R04, R05, \
@@ -79,32 +75,29 @@ enum { BASE = 0, SYM = 1, NUM = 2, ADJUST = 3 };
   /* ROW4 */ { R00, R01, R02, R03, R04, R05 },   \
   /* ROW5 */ { R10, R11, R12, R13, R14, R15 },   \
   /* ROW6 */ { R20, R21, R22, R23, R24, R25 },   \
-  /* ROW7 */ { KC_NO, KC_NO, KC_NO, R30, R31, R32 } }
+  /* ROW7 */ { KC_NO, KC_NO, KC_NO, R32, R31, R30 } }
 
 static const uint8_t KEYMAP[NUM_LAYERS][8][6] = {
 
   // BASE — QWERTY alphas, unmodified, so every game bind works as shipped.
   //
-  // The outer left column keeps Tab/Ctrl/Shift as *held* modifiers rather than
-  // one-shots. Games hold Shift to sprint and Ctrl to crouch, and a one-shot
-  // that clears after the next keypress cannot do that. The one-shot versions
-  // live on the thumbs, which is where typing should reach for them.
+  // Every modifier is a plain held modifier, like a normal keyboard: it is
+  // down exactly as long as the key is. Games hold Shift to sprint and Ctrl to
+  // crouch, and anything cleverer than that breaks them.
   //
   //   ,---------------------------------.   ,---------------------------------.
   //   | Tab  Q    W    E    R    T      |   | Y    U    I    O    P    Bksp   |
   //   | Ctl  A    S    D    F    G      |   | H    J    K    L    ;    '      |
   //   | Sft  Z    X    C    V    B      |   | N    M    ,    .    /    Enter  |
-  //   `-----------. Gui  SYM  Spc       |   | Sft* Ctl* Alt* .----------------'
+  //   `-----------. Spc  SYM  Gui       |   | Spc  NUM  Alt  .----------------'
   //
-  // Gui is held, not one-shot: the OS shortcuts it exists for (Gui+L, Gui+Tab,
-  // tiling binds) are chords, and a window manager that repeats on hold needs
-  // the key genuinely down. Esc is not on BASE as a result — it lives on the
-  // same thumb under SYM and at L00 under NUM.
+  // Esc is not on BASE — it lives on the Gui thumb under SYM and at L00 under
+  // NUM.
   [BASE] = LAYOUT(
     KC_TAB,  KC_Q, KC_W, KC_E, KC_R, KC_T,      KC_Y, KC_U, KC_I,    KC_O,   KC_P,    KC_BSPC,
     KC_LCTL, KC_A, KC_S, KC_D, KC_F, KC_G,      KC_H, KC_J, KC_K,    KC_L,   KC_SCLN, KC_QUOT,
     KC_LSFT, KC_Z, KC_X, KC_C, KC_V, KC_B,      KC_N, KC_M, KC_COMM, KC_DOT, KC_SLSH, KC_ENT,
-             KC_LGUI, LAYER(SYM), KC_SPC,       KC_OSFT, LAYER(NUM), KC_OALT),
+             KC_SPC,  LAYER(SYM), KC_LGUI,      KC_SPC,  LAYER(NUM), KC_LALT),
 
   // SYM — symbols under the home row.
   //
@@ -115,32 +108,26 @@ static const uint8_t KEYMAP[NUM_LAYERS][8][6] = {
   //
   // Right hand home row is the pairs — ( ) { } — because those are what code
   // is made of. Operators sit on the row above, the rarer punctuation below.
-  // Left hand gets the one-shot modifiers on its home row so Ctrl+symbol and
+  // Left hand gets the modifiers on its home row so Ctrl+symbol and
   // Alt+symbol still chord without leaving the layer.
   //
   //   ,---------------------------------.   ,---------------------------------.
   //   | ~    !    @    #    $    %      |   | ^    &    *    -    +    Del    |
-  //   | Ctl  Gui* Alt* Sft* Ctl* |      |   | (    )    {    }    =    `      |
+  //   | Ctl  Gui  Alt  Sft  Ctl  |      |   | (    )    {    }    =    `      |
   //   | Sft  \    :    <    >    ?      |   | [    ]    _    "    /    Enter  |
-  //   `-----------. Esc  ---- Spc       |   | Sft* ADJ  Alt* .----------------'
+  //   `-----------. Spc  ---- Esc       |   | Spc  ---- Alt  .----------------'
   //
-  // Esc is explicit here, not KC_TRNS: BASE's thumb is Gui now, so falling
-  // through would give Gui on this layer and leave Esc unreachable.
+  // Esc replaces Gui on the inner thumb here; Gui is still on the home row.
   //
-  // The shifted characters here are plain keycodes — the firmware sends the
-  // usage ID and the host's US layout applies Shift. Anything needing Shift is
-  // written as the base key with KC_LSFT folded in by the host, which this
-  // firmware cannot express, so the genuinely shifted glyphs (! @ # $ % ^ & *
-  // etc.) are reached with the one-shot Shift on the left home row instead.
-  // ponytail: no shifted-keycode encoding; add one if reaching for Shift on
-  // this layer actually annoys you in practice.
+  // S(k) sends Shift+k (from keycodes.h), so the glyphs come out as drawn
+  // above rather than as their unshifted base keys.
   [SYM] = LAYOUT(
-    KC_GRV,  KC_1,    KC_2,    KC_3,    KC_4,    KC_5,       KC_6,    KC_7,    KC_8,    KC_MINS, KC_EQL,  KC_DEL,
-    KC_TRNS, KC_OGUI, KC_OALT, KC_OSFT, KC_OCTL, KC_BSLS,    KC_9,    KC_0,    KC_LBRC, KC_RBRC, KC_EQL,  KC_GRV,
-    KC_TRNS, KC_BSLS, KC_SCLN, KC_COMM, KC_DOT,  KC_SLSH,    KC_LBRC, KC_RBRC, KC_MINS, KC_QUOT, KC_SLSH, KC_TRNS,
-             KC_ESC,  KC_TRNS, KC_TRNS,                      KC_TRNS, LAYER(ADJUST), KC_TRNS),
+    S(KC_GRV), S(KC_1),    S(KC_2),    S(KC_3),    S(KC_4),   S(KC_5),       S(KC_6),  S(KC_7),  S(KC_8),    KC_MINS,    S(KC_EQL), KC_DEL,
+    KC_TRNS,   KC_LGUI,    KC_LALT,    KC_LSFT,    KC_LCTL,   S(KC_BSLS),    S(KC_9),  S(KC_0),  S(KC_LBRC), S(KC_RBRC), KC_EQL,    KC_GRV,
+    KC_TRNS,   KC_BSLS,    S(KC_SCLN), S(KC_COMM), S(KC_DOT), S(KC_SLSH),    KC_LBRC,  KC_RBRC,  S(KC_MINS), S(KC_QUOT), KC_SLSH,   KC_TRNS,
+               KC_TRNS,    KC_TRNS,    KC_ESC,                               KC_TRNS,  KC_TRNS,  KC_TRNS),
 
-  // NUM — numpad right, navigation left.
+  // NUM — numpad right, arrows and function keys left.
   //
   // There is no number row on a 42-key board and this is the replacement: the
   // right hand holds NUM and types digits from a 3x3 cluster under home
@@ -148,31 +135,18 @@ static const uint8_t KEYMAP[NUM_LAYERS][8][6] = {
   // the thumb-adjacent slot next to 1.
   //
   // Arrows go on the left in the vim positions transposed to that hand, so the
-  // right hand — the one holding the layer — never has to do both jobs.
+  // right hand — the one holding the layer — never has to do both jobs. F1-F5
+  // sit above the arrows and F6-F10 below; F11 and F12 take the inner keys.
   //
   //   ,---------------------------------.   ,---------------------------------.
-  //   | Esc  Home PgDn PgUp End  ----   |   | ----  7    8    9    -    Bksp  |
-  //   | Ctl  Left Down Up   Rght ----   |   | *     4    5    6    +    Enter |
-  //   | Sft  ---- ---- ---- ---- ----   |   | /     1    2    3    .    ----  |
-  //   `-----------. Esc  ADJ  Spc       |   | 0     ---- Alt* .----------------'
+  //   | Esc  F1   F2   F3   F4   F5     |   | F12   7    8    9    -    Bksp  |
+  //   | Ctl  Left Down Up   Rght F11    |   | *     4    5    6    =    Enter |
+  //   | Sft  F6   F7   F8   F9   F10    |   | /     1    2    3    .    ----  |
+  //   `-----------. Spc  ---- Gui       |   | 0     ---- Alt  .----------------'
   [NUM] = LAYOUT(
-    KC_ESC,  KC_HOME, KC_PGDN, KC_PGUP, KC_END,  KC_NO,      KC_NO,   KC_7, KC_8, KC_9, KC_MINS, KC_TRNS,
-    KC_TRNS, KC_LEFT, KC_DOWN, KC_UP,   KC_RGHT, KC_NO,      KC_PAST, KC_4, KC_5, KC_6, KC_EQL,  KC_TRNS,
-    KC_TRNS, KC_NO,   KC_INS,  KC_NO,   KC_NO,   KC_NO,      KC_PSLS, KC_1, KC_2, KC_3, KC_DOT,  KC_TRNS,
-             KC_TRNS, LAYER(ADJUST), KC_TRNS,                KC_0,    KC_TRNS, KC_TRNS),
-
-  // ADJUST — function keys and the rest. Reached by holding both thumb layer
-  // keys, so it costs no key of its own.
-  //
-  //   ,---------------------------------.   ,---------------------------------.
-  //   | ---- F1   F2   F3   F4   F5     |   | F6   F7   F8   F9   F10  ----   |
-  //   | Ctl  ---- ---- ---- ---- ----   |   | ---- ---- ---- F11  F12  ----   |
-  //   | Sft  ---- ---- ---- ---- ----   |   | ---- ---- ---- ---- ---- Caps   |
-  //   `-----------. ---- ---- ----      |   | ---- ---- PScr .----------------'
-  [ADJUST] = LAYOUT(
-    KC_NO,   KC_F1,   KC_F2,   KC_F3,   KC_F4,   KC_F5,      KC_F6,   KC_F7,   KC_F8,   KC_F9,   KC_F10,  KC_NO,
-    KC_TRNS, KC_NO,   KC_NO,   KC_NO,   KC_NO,   KC_NO,      KC_NO,   KC_NO,   KC_NO,   KC_F11,  KC_F12,  KC_NO,
-    KC_TRNS, KC_NO,   KC_NO,   KC_NO,   KC_NO,   KC_NO,      KC_NO,   KC_NO,   KC_NO,   KC_NO,   KC_NO,   KC_CAPS,
-             KC_NO,   KC_TRNS, KC_NO,                        KC_NO,   KC_TRNS, KC_PSCR),
+    KC_ESC,  KC_F1,   KC_F2,   KC_F3,   KC_F4,   KC_F5,      KC_F12,  KC_7, KC_8, KC_9, KC_MINS, KC_TRNS,
+    KC_TRNS, KC_LEFT, KC_DOWN, KC_UP,   KC_RGHT, KC_F11,     KC_PAST, KC_4, KC_5, KC_6, KC_EQL,  KC_TRNS,
+    KC_TRNS, KC_F6,   KC_F7,   KC_F8,   KC_F9,   KC_F10,     KC_PSLS, KC_1, KC_2, KC_3, KC_DOT,  KC_NO,
+             KC_TRNS, KC_TRNS, KC_TRNS,                      KC_0,    KC_TRNS, KC_TRNS),
 };
 // clang-format on

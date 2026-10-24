@@ -1,6 +1,8 @@
 // USB HID usage IDs (HID Usage Tables 1.12, keyboard page 0x07).
-// Full US QWERTY set. These are raw usage codes, not ASCII — the firmware
-// sends them straight into the HID report, so the host applies the US layout.
+// Only the keys the keymap uses are defined; the rest of the US QWERTY set is
+// commented out — uncomment one before using it. These are raw usage codes,
+// not ASCII: the firmware sends them straight into the HID report, so the host
+// applies the US layout.
 #pragma once
 
 #include <stdint.h>
@@ -59,14 +61,13 @@
 #define KC_LBRC 0x2F  // [ {
 #define KC_RBRC 0x30  // ] }
 #define KC_BSLS 0x31  // \ |
-#define KC_NUHS 0x32  // non-US # ~
+// #define KC_NUHS 0x32  // non-US # ~
 #define KC_SCLN 0x33  // ; :
 #define KC_QUOT 0x34  // ' "
 #define KC_GRV  0x35  // ` ~
 #define KC_COMM 0x36  // , <
 #define KC_DOT  0x37  // . >
 #define KC_SLSH 0x38  // / ?
-#define KC_CAPS 0x39  // Caps Lock
 
 // Function keys
 #define KC_F1  0x3A
@@ -83,40 +84,39 @@
 #define KC_F12 0x45
 
 // Navigation / editing
-#define KC_PSCR 0x46  // Print Screen
-#define KC_SLCK 0x47  // Scroll Lock
-#define KC_PAUS 0x48
-#define KC_INS  0x49
-#define KC_HOME 0x4A
-#define KC_PGUP 0x4B
+// #define KC_SLCK 0x47  // Scroll Lock
+// #define KC_PAUS 0x48
+// #define KC_INS  0x49
+// #define KC_HOME 0x4A
+// #define KC_PGUP 0x4B
 #define KC_DEL  0x4C
-#define KC_END  0x4D
-#define KC_PGDN 0x4E
+// #define KC_END  0x4D
+// #define KC_PGDN 0x4E
 #define KC_RGHT 0x4F
 #define KC_LEFT 0x50
 #define KC_DOWN 0x51
 #define KC_UP   0x52
 
 // Keypad
-#define KC_NLCK 0x53  // Num Lock
+// #define KC_NLCK 0x53  // Num Lock
 #define KC_PSLS 0x54  // keypad /
 #define KC_PAST 0x55  // keypad *
-#define KC_PMNS 0x56  // keypad -
-#define KC_PPLS 0x57  // keypad +
-#define KC_PENT 0x58  // keypad Enter
-#define KC_P1   0x59
-#define KC_P2   0x5A
-#define KC_P3   0x5B
-#define KC_P4   0x5C
-#define KC_P5   0x5D
-#define KC_P6   0x5E
-#define KC_P7   0x5F
-#define KC_P8   0x60
-#define KC_P9   0x61
-#define KC_P0   0x62
-#define KC_PDOT 0x63  // keypad .
-#define KC_NUBS 0x64  // non-US \ |
-#define KC_APP  0x65  // Application / Menu
+// #define KC_PMNS 0x56  // keypad -
+// #define KC_PPLS 0x57  // keypad +
+// #define KC_PENT 0x58  // keypad Enter
+// #define KC_P1   0x59
+// #define KC_P2   0x5A
+// #define KC_P3   0x5B
+// #define KC_P4   0x5C
+// #define KC_P5   0x5D
+// #define KC_P6   0x5E
+// #define KC_P7   0x5F
+// #define KC_P8   0x60
+// #define KC_P9   0x61
+// #define KC_P0   0x62
+// #define KC_PDOT 0x63  // keypad .
+// #define KC_NUBS 0x64  // non-US \ |
+// #define KC_APP  0x65  // Application / Menu
 
 // Modifiers.
 // Encoded as 0xE0..0xE7 (their real HID usage IDs); the scanner turns these
@@ -125,9 +125,9 @@
 #define KC_LSFT 0xE1
 #define KC_LALT 0xE2
 #define KC_LGUI 0xE3
-#define KC_RCTL 0xE4
-#define KC_RSFT 0xE5
-#define KC_RALT 0xE6
+// #define KC_RCTL 0xE4
+// #define KC_RSFT 0xE5
+// #define KC_RALT 0xE6
 #define KC_RGUI 0xE7
 
 #define IS_MOD(k) ((k) >= KC_LCTL && (k) <= KC_RGUI)
@@ -143,15 +143,24 @@
 // involved, so there is nothing to mistime at speed.
 //
 // Holding one still works as a plain modifier, so Ctrl+drag and game binds
-// that expect a held Shift behave normally.
+// that expect a held Shift behave normally. The catch: held on its own and
+// released (Shift-to-sprint with only the mouse), it is indistinguishable from
+// a tap without a timer, so it stays armed and shifts the next key.
 #define OSM(mod) ((mod) | 0x08)
 #define IS_OSM(k) ((k) >= 0xE8 && (k) <= 0xEF)
 #define OSM_BIT(k) (1 << ((k) - 0xE8))
 
-#define KC_OSFT OSM(KC_LSFT)
-#define KC_OCTL OSM(KC_LCTL)
-#define KC_OALT OSM(KC_LALT)
-#define KC_OGUI OSM(KC_LGUI)
+// #define KC_OSFT OSM(KC_LSFT)
+// #define KC_OCTL OSM(KC_LCTL)
+// #define KC_OALT OSM(KC_LALT)
+// #define KC_OGUI OSM(KC_LGUI)
+
+// Shifted key: S(KC_9) sends Shift+9, i.e. '('. Bit 7 set on a base usage ID.
+// Only valid for usage IDs below 0x60 — every shiftable glyph is under 0x39,
+// and 0x80..0xDF is otherwise unused here, so it can't collide with a
+// modifier, one-shot, or layer code.
+#define S(k) (0x80 | (k))
+#define IS_SHIFTED(k) ((k) >= 0x80 && (k) < KC_LCTL)
 
 // Momentary layer switch. 0xF0 | layer — outside the HID usage range we use,
 // so it can never collide with a real keycode.
