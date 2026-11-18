@@ -61,7 +61,8 @@ Four passes per loop, per-row bitmasks (bit c = col c):
 Passes 2–4 = `updateReport()`, only on scans where debounce committed a change.
 - Keys latch layer on press (`heldLayer`); releasing layer key won't strand held key.
 - `S(k)` weak shift: follows most recent key only; `(` rolled into `-` sends `-`.
-- Send only on change: `USB_write()` blocks till done; unconditional = scan pinned to 1ms poll.
+- Send only on change: `USB_write()` waits for previous report, then queues (no wait on own transfer); unconditional = scan pinned to 1ms poll.
+- Pacing reads `SysTick->CNT` (up-counter, 0..CMP, 1ms reload). Not `micros()`: 64-bit div + core formula assumes down-counter, runs backwards within each ms.
 
 ### Tuning (`main.cpp`, reason in comments)
 | Constant | Default | Turn when |
@@ -87,7 +88,7 @@ pio run
 pio run -t upload
 ./check_keymap.sh
 ```
-~13KB flash (21%), ~1.3KB RAM (7%).
+~11.5KB flash (19%), ~2.8KB RAM (14%, mostly core).
 
 ### Bootloader
 1. Hold A while plugging in. `bootKeyCheck()` in `setup()` before scan loop (survives broken keymap/hung `loop()`). Normal = `16c0:27e5`, A held = `1a86:55e0`. Everyday path, `upload_protocol = isp`. No running-board combo on purpose (would reboot mid-typing).
@@ -111,11 +112,11 @@ pio run -t upload
 ## Conventions
 - `lib/` vendored lib locally patched + trimmed: `Print`/`press()`/ASCII map, examples, README removed; only `Keyboard.begin()` + `Keyboard.sendReport()` over `internal/`. Diff before re-vendoring.
 - Two `-Wunused-variable` from core `analog.cpp` (`.platformio/packages/`): upstream, leave. Own code clean under `-Wall -Wextra` (`build_src_flags`); keep it.
-- Scan path: direct registers (`GPIOA->BCR`, `GPIOB->INDR`), not `digitalWrite`/`digitalRead` (pin-map lookup per call). No `delayMicroseconds()` (64-bit div, no HW divider).
+- Scan path: direct registers (`GPIOA->BCR`, `GPIOB->INDR`), not `digitalWrite`/`digitalRead` (pin-map lookup per call). No `delayMicroseconds()`/`micros()` (64-bit div = soft `__udivdi3`; HW div is 32-bit only). No `__builtin_ctz` (no Zbb → libcall).
 
 ### GPIO traps
 Each killed the whole matrix once. Symptom: enumerates fine, no key reports, hold-A does nothing.
-- `GPIO_Init()` doesn't enable port clock (`pinMode()` does). Rows use `GPIO_Init()`, so `setup()` must call `RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE)` first. `561fb96` broke board this way. Any port set up only via vendor driver needs clock by hand.
+- `GPIO_Init()` doesn't enable port clock (`pinMode()` does). Rows and cols use `GPIO_Init()` (no `pinMode()` anywhere), so `setup()` must enable `RCC_APB2Periph_GPIOA | RCC_APB2Periph_GPIOB` first. `561fb96` broke board this way. Any port set up only via vendor driver needs clock by hand.
 - `CFGHR` write-only; never RMW; use `GPIO_Init()` (RAM shadow).
 - PB10 never via `pinMode()` (also `PIN_SERIAL_TX` in variant).
 - Rows push-pull: diodes block back-feed, so open-drain buys nothing; push-pull drives release edge.

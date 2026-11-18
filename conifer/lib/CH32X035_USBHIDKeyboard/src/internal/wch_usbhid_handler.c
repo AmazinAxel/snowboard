@@ -75,7 +75,7 @@ void USB_init(void) {
     
     for(volatile int i = 0; i < 20000; i++) __NOP();
 
-    generate_all_string_descriptors();
+    generate_serial_descriptor();
 
     // 4. Init Core & Buffers
     memset(wch_usbhid_EP0_buffer, 0, EP0_SIZE + 2);
@@ -122,8 +122,6 @@ static inline void USB_EP0_SETUP(void) {
               case 0:   USB_pDescr = (const uint8_t*)&wch_usbhid_LangDescr; break;
               case 1:   USB_pDescr = (const uint8_t*)&wch_usbhid_ManufDescr; break;
               case 2:   USB_pDescr = (const uint8_t*)&wch_usbhid_ProdDescr; break;
-              case 3:   USB_pDescr = (const uint8_t*)&wch_usbhid_SerDescr; break;
-              case 4:   USB_pDescr = (const uint8_t*)&wch_usbhid_InterfDescr; break;
               default:  USB_pDescr = (const uint8_t*)&wch_usbhid_SerDescr; break;
             }
             len = ((const uint8_t*)USB_pDescr)[0];
@@ -230,42 +228,31 @@ static inline void USB_EP0_OUT(void) {
   }
 }
 
-// Write to Endpoint 1 using synchronized polling
+// Write to Endpoint 1. Waits only for the previous transfer, not this one: the
+// report is copied into the EP buffer, so the caller can carry on scanning
+// while the host polls it out.
 uint32_t USB_write(const uint8_t* buf, uint32_t len) {
     if(!USB_ENUM_OK) return 0;
-    if(len > 64) len = 64;
-    
-    // Wait for buffer to be free
+    if(len > EP1_SIZE) len = EP1_SIZE;
+
+    // Wait for buffer to be free. On timeout (host suspended, stopped polling)
+    // overwrite it anyway rather than hang the scan.
     uint32_t timeout = 5000000;
     while(!wch_hid_ep1_complete) {
         if(--timeout == 0) break;
         if(!USB_ENUM_OK) return 0;
     }
-    
+
     wch_hid_ep1_complete = 0; // Mark busy
-    
+
     // Copy data to EP1 buffer
     memcpy(wch_usbhid_EP1_buffer, buf, len);
     USBFSD->UEP1_TX_LEN = len;
-    
+
     // Set ACK to transmit
     USBFSD->UEP1_CTRL_H = (USBFSD->UEP1_CTRL_H & ~USBFS_UEP_T_RES_MASK) | USBFS_UEP_T_RES_ACK;
-    
-    // Sync Wait: Ensure transfer completes before returning
-    timeout = 5000000;
-    while(!wch_hid_ep1_complete) {
-        if(--timeout == 0) {
-            wch_hid_ep1_complete = 1; // Force ready on timeout
-            break; 
-        }
-        if(!USB_ENUM_OK) return 0;
-    }
-    
-    return len;
-}
 
-uint8_t USB_ready(void) {
-    return USB_ENUM_OK;
+    return len;
 }
 
 void USBFS_IRQHandler(void) __attribute__((interrupt));

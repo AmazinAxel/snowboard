@@ -14,7 +14,7 @@ class USBHIDKeyboard_ {
 public:
   void begin(void);
 
-  // Blocks until the host has taken the report
+  // Waits for the previous report to be taken, then queues this one
   void sendReport(KeyReport* keys);
 };
 

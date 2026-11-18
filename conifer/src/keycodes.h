@@ -133,32 +133,10 @@
 #define IS_MOD(k) ((k) >= KC_LCTL && (k) <= KC_RGUI)
 #define MOD_BIT(k) (1 << ((k) - KC_LCTL))
 
-// One-shot ("sticky") modifiers, 0xE8..0xEF — the same order as 0xE0..0xE7,
-// with bit 3 set. 0xE8-0xEF is unused by the HID keyboard page, so this can
-// never collide with a real usage ID.
-//
-// Tap one, then tap a key: the modifier applies to that key and then clears.
-// This replaces holding a modifier down, which is the reach these thumb keys
-// exist to remove. Unlike a mod-tap or a tap-dance there is no timing window
-// involved, so there is nothing to mistime at speed.
-//
-// Holding one still works as a plain modifier, so Ctrl+drag and game binds
-// that expect a held Shift behave normally. The catch: held on its own and
-// released (Shift-to-sprint with only the mouse), it is indistinguishable from
-// a tap without a timer, so it stays armed and shifts the next key.
-#define OSM(mod) ((mod) | 0x08)
-#define IS_OSM(k) ((k) >= 0xE8 && (k) <= 0xEF)
-#define OSM_BIT(k) (1 << ((k) - 0xE8))
-
-// #define KC_OSFT OSM(KC_LSFT)
-// #define KC_OCTL OSM(KC_LCTL)
-// #define KC_OALT OSM(KC_LALT)
-// #define KC_OGUI OSM(KC_LGUI)
-
 // Shifted key: S(KC_9) sends Shift+9, i.e. '('. Bit 7 set on a base usage ID.
 // Only valid for usage IDs below 0x60 — every shiftable glyph is under 0x39,
 // and 0x80..0xDF is otherwise unused here, so it can't collide with a
-// modifier, one-shot, or layer code.
+// modifier or layer code.
 #define S(k) (0x80 | (k))
 #define IS_SHIFTED(k) ((k) >= 0x80 && (k) < KC_LCTL)
 

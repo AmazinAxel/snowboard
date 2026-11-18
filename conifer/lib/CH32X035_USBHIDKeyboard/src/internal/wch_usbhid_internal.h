@@ -21,10 +21,9 @@ extern const uint8_t wch_usbhid_ReportDescr[];
 extern const uint16_t wch_usbhid_ReportDescrLen;
 
 extern const USB_STR_DESCR wch_usbhid_LangDescr;
-extern USB_STR_DESCR wch_usbhid_ManufDescr;
-extern USB_STR_DESCR wch_usbhid_ProdDescr;
+extern const USB_STR_DESCR wch_usbhid_ManufDescr;
+extern const USB_STR_DESCR wch_usbhid_ProdDescr;
 extern USB_STR_DESCR wch_usbhid_SerDescr;
-extern USB_STR_DESCR wch_usbhid_InterfDescr;
 
 // Setup buffer access
 typedef struct __attribute__((packed)) {
@@ -44,12 +43,11 @@ typedef struct __attribute__((packed)) {
 extern "C" {
 #endif
 
-void generate_all_string_descriptors(void);
+void generate_serial_descriptor(void);
 void USB_init(void);
 
 // Helper for C++
 uint32_t USB_write(const uint8_t* buf, uint32_t len);
-uint8_t USB_ready(void);
 
 #ifdef __cplusplus
 }

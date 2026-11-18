@@ -29,7 +29,6 @@
 //
 // Columns are PA0..PA5, so bit c of GPIOA->INDR is column c directly and a
 // sampled row needs no remapping.
-static const uint8_t COL_PINS[6] = { PA0, PA1, PA2, PA3, PA4, PA5 };
 
 // Row bit positions on GPIOB (ROW0..ROW7 = PB0, PB3, PB4, PB6, PB8, PB7, PB10,
 // PB9). Taken from the MCU pad -> net mapping in snowlayer.kicad_pcb, not from
@@ -65,8 +64,9 @@ static const uint8_t DEBOUNCE_SCANS = 5;
 // Two settles per row x 8 rows must stay under SCAN_INTERVAL_US, or the scan
 // stops being paced and the debounce window stretches with it.
 //
-// Arduino's delayMicroseconds() does 64-bit division on a core with no
-// hardware divider, which costs more than the delay itself at this scale.
+// Arduino's delayMicroseconds() does 64-bit division, which the core's 32-bit
+// divider can't do — a software routine that costs more than the delay itself
+// at this scale.
 static const uint32_t MATRIX_SETTLE_CYCLES = 150;
 
 static inline void settleDelay() {
@@ -98,36 +98,20 @@ static uint8_t heldLayer[NUM_ROWS][NUM_COLS];    // layer a key resolved on
 static KeyReport report;
 static KeyReport lastReport;
 
-// --- One-shot modifiers -----------------------------------------------------
-// A one-shot ("sticky") modifier is tapped rather than held: tap Shift, tap a
-// letter, get a capital. This is what lets the modifiers live on the thumbs
-// instead of the pinkies without asking the hand to hold anything down.
-//
-// Two bitmasks, both in KC_LCTL..KC_RGUI bit order:
-//   oneshotMods   armed and waiting for a key to apply to
-//   oneshotUsed   armed modifiers that a key has already consumed; they are
-//                 cleared once that key is released, not immediately, so the
-//                 host sees the modifier held for the whole of the keypress.
-//
-// Deliberately no timeout. A one-shot stays armed until it is used or tapped
-// again, which means there is no window to beat and nothing behaves
-// differently when typing fast — the failure mode that rules out mod-tap and
-// tap dance on this board.
-static uint8_t oneshotMods;
-static uint8_t oneshotUsed;
-
 // Shift for an S(k) key follows the most recently pressed key only ("weak"
 // shift). Applying it whenever any S(k) key is held turns a roll like ( then -
 // into ( then _, because the host reads the new key against the report's mods.
 static bool weakShift;
 
-// Held-key state for the one-shot edge detection: bit c per row, tracking
-// which keys were down on the previous scan.
+// Held-key state for weak-shift edge detection: bit c per row, tracking which
+// keys were down on the previous report.
 static uint8_t prevKeyDown[NUM_ROWS];
 
-// Timestamp of the last scan, for pacing. Unsigned subtraction makes the
-// comparison correct across the micros() rollover.
-static uint32_t lastScanUs;
+// SysTick count at the last scan, for pacing. The core runs SysTick off HCLK,
+// counting up from 0 to CMP and reloading every 1ms. Read directly because
+// micros() does a 64-bit division per call, and its formula assumes a
+// down-counter, so on this setup it runs backwards within each millisecond.
+static uint32_t lastScanTick;
 
 // Power-on recovery: if A is held at plug-in, reboot into the CH32X035 factory
 // USB bootloader so the board can be re-flashed with wchisp over USB-C.
@@ -191,14 +175,23 @@ static uint8_t resolveKey(uint8_t layerMask, uint8_t r, uint8_t c) {
 }
 
 void setup() {
-  // USB first, before any pinMode(). The matrix setup below reconfigures GPIO
-  // and AFIO, and doing that ahead of USB_init() stops the device enumerating.
+  // USB first, before any matrix GPIO setup; doing that ahead of USB_init()
+  // stopped the device enumerating.
   Keyboard.begin();
 
-  for (uint8_t c = 0; c < NUM_COLS; c++) {
-    pinMode(COL_PINS[c], INPUT_PULLUP);
-  }
-  // Rows, all eight, via the vendor driver rather than pinMode().
+  // Matrix pins all go through the vendor driver, not pinMode(): it is what
+  // pinMode(INPUT_PULLUP) does underneath, minus the pin-map tables. Like
+  // pinMode() it needs the port clock, so enable it first — GPIO_Init does not.
+  RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA | RCC_APB2Periph_GPIOB, ENABLE);
+
+  // Columns: PA0..PA5, input with pull-up, all in one call.
+  GPIO_InitTypeDef cols;
+  cols.GPIO_Pin   = COL_MASK;
+  cols.GPIO_Speed = GPIO_Speed_50MHz;
+  cols.GPIO_Mode  = GPIO_Mode_IPU;
+  GPIO_Init(GPIOA, &cols);
+
+  // Rows, all eight.
   //
   // PB10 must not go through pinMode() at all: the variant header also maps it
   // to PIN_SERIAL_TX, and configuring it that way clobbers the USB pin setup —
@@ -212,10 +205,8 @@ void setup() {
   // ~mask) | bits` here silently reconfigures every other pin 8-15 — including
   // PB8 and PB9 — and the matrix goes dead.
   //
-  // GPIO_Init does not enable the port clock; pinMode() did that as a side
-  // effect. No GPIOB pin goes through pinMode() any more, so without this the
-  // port stays unclocked, every row write is dropped, and no key ever reads.
-  RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE);
+  // Without the clock enable above the port stays unclocked, every write is
+  // dropped, and no key ever reads (561fb96 broke the board this way).
   for (uint8_t r = 0; r < NUM_ROWS; r++) {
     GPIO_InitTypeDef row;
     row.GPIO_Pin   = (uint16_t)(1u << ROW_BITS[r]);
@@ -243,8 +234,8 @@ void setup() {
 //
 // Sends its own reports directly and does not touch keyDown/report, so normal
 // typing still works alongside it. Blocking (each USB_write waits for the
-// transfer), which is fine for a debug build and is why it is compiled out by
-// default.
+// previous transfer), which is fine for a debug build and is why it is
+// compiled out by default.
 static void debugType(uint8_t usage) {
   KeyReport k;
   memset(&k, 0, sizeof(k));
@@ -278,11 +269,11 @@ static void updateReport() {
   // so that pressing a layer key and a key under it in the same scan resolves
   // on the new layer.
   uint8_t layerMask = 0;
+  // Plain column loops rather than __builtin_ctz: without Zbb that is a
+  // libcall per key, and a row has only six columns.
   for (uint8_t r = 0; r < NUM_ROWS; r++) {
-    uint8_t down = keyDown[r];
-    while (down) {
-      uint8_t c = __builtin_ctz(down);
-      down &= down - 1;  // clear lowest set bit
+    for (uint8_t c = 0; c < NUM_COLS; c++) {
+      if (!((keyDown[r] >> c) & 1u)) continue;
       uint8_t k = KEYMAP[BASE][r][c];
       if (IS_LAYER(k)) layerMask |= (1 << LAYER_NUM(k));
     }
@@ -294,30 +285,22 @@ static void updateReport() {
   memset(&report, 0, sizeof(report));
   uint8_t slot = 0;
 
-  // Set while walking the matrix if any non-modifier key is down, so the armed
-  // one-shots can be released at the end of the pass once nothing is consuming
-  // them any more.
+  // Set while walking the matrix if any non-modifier key is down; weak shift
+  // ends with the last of them.
   bool anyNormalKeyDown = false;
 
   for (uint8_t r = 0; r < NUM_ROWS; r++) {
     uint8_t down = keyDown[r];
 
-    // Drop the latch on every key in this row that is no longer held.
-    uint8_t released = ~down & COL_MASK;
-    while (released) {
-      uint8_t c = __builtin_ctz(released);
-      released &= released - 1;
-      heldLayer[r][c] = 0;
-    }
-
-    // Keys that went down since the last scan. One-shots act on the press
-    // edge: arming and consuming must each happen exactly once per press, not
-    // once per scan.
+    // Keys that went down since the last report. Weak shift is decided on the
+    // press edge, so only the newest key sets it.
     uint8_t pressedEdge = down & ~prevKeyDown[r];
 
-    while (down) {
-      uint8_t c = __builtin_ctz(down);
-      down &= down - 1;
+    for (uint8_t c = 0; c < NUM_COLS; c++) {
+      if (!((down >> c) & 1u)) {
+        heldLayer[r][c] = 0;  // no longer held: drop the latch
+        continue;
+      }
       bool isEdge = (pressedEdge >> c) & 1u;
 
       uint8_t base = KEYMAP[BASE][r][c];
@@ -330,24 +313,11 @@ static void updateReport() {
       if (k == KC_NO) continue;
       if (IS_MOD(k)) {
         report.modifiers |= MOD_BIT(k);
-      } else if (IS_OSM(k)) {
-        // Holding a one-shot works as a plain modifier — games bind held Shift
-        // to sprint and held Ctrl to crouch, and those have to keep working.
-        // The armed state below is what makes the *tap* case do something
-        // different, and it costs nothing while the key is still down.
-        report.modifiers |= OSM_BIT(k);
-        // Toggle on the press edge, so tapping an armed one-shot disarms it
-        // rather than re-arming it forever.
-        if (isEdge) oneshotMods ^= OSM_BIT(k);
       } else if (slot < 6) {
         if (isEdge) weakShift = IS_SHIFTED(k);
         if (IS_SHIFTED(k)) k &= 0x7F;
         report.keys[slot++] = k;
         anyNormalKeyDown = true;
-        // This key consumes whatever is armed. Marking rather than clearing:
-        // the modifier has to stay in the report for as long as the key it
-        // applies to is held, or the host sees Shift release mid-keypress.
-        if (isEdge) oneshotUsed |= oneshotMods;
       } else {
         anyNormalKeyDown = true;
       }
@@ -358,21 +328,12 @@ static void updateReport() {
     prevKeyDown[r] = keyDown[r];
   }
 
-  // Apply the armed one-shots to this report, then retire the consumed ones
-  // once the key that used them is up. Ordering matters: the modifier bits go
-  // in before the clear, so the final report of a tapped-Shift-then-letter
-  // sequence still carries Shift alongside the letter.
-  report.modifiers |= oneshotMods;
   if (!anyNormalKeyDown) weakShift = false;
   if (weakShift) report.modifiers |= MOD_BIT(KC_LSFT);
-  if (!anyNormalKeyDown) {
-    oneshotMods &= ~oneshotUsed;
-    oneshotUsed = 0;
-  }
 
-  // Pass 4: send only when something actually changed. USB_write blocks until
-  // the transfer completes, so an unconditional send would cap the scan rate
-  // at the 1ms polling interval for no benefit.
+  // Pass 4: send only when something actually changed. USB_write waits for the
+  // previous report to go out, so an unconditional send would cap the scan
+  // rate at the 1ms polling interval for no benefit.
   if (memcmp(&report, &lastReport, sizeof(report)) != 0) {
     Keyboard.sendReport(&report);
     lastReport = report;
@@ -424,14 +385,24 @@ void loop() {
     }
   }
 
-  // The report is a pure function of keyDown plus the one-shot state, and that
-  // state only moves on a keyDown change — so an unchanged matrix, which is
-  // nearly every scan, skips report building entirely.
+  // The report is a pure function of keyDown plus the weak-shift state, and
+  // that state only moves on a keyDown change — so an unchanged matrix, which
+  // is nearly every scan, skips report building entirely.
   if (changed) updateReport();
 
   // Pace the scan, so DEBOUNCE_SCANS is a fixed time. This busy-wait saves no
   // current — the core spins either way; WFI + a timer IRQ would be needed for
   // that, and isn't worth it on a USB-powered board.
-  while (micros() - lastScanUs < SCAN_INTERVAL_US) { }
-  lastScanUs = micros();
+  //
+  // Elapsed ticks are taken modulo the 1ms reload, so a scan longer than 1ms
+  // (only possible when a report waits on the host) can wait up to one extra
+  // interval. Harmless, and cheaper than tracking milliseconds too.
+  const uint32_t period = (uint32_t)SysTick->CMP + 1;
+  const uint32_t interval = SystemCoreClock / 1000000 * SCAN_INTERVAL_US;
+  for (;;) {
+    int32_t elapsed = (int32_t)((uint32_t)SysTick->CNT - lastScanTick);
+    if (elapsed < 0) elapsed += period;
+    if ((uint32_t)elapsed >= interval) break;
+  }
+  lastScanTick = (uint32_t)SysTick->CNT;
 }

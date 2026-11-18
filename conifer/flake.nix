@@ -29,8 +29,6 @@
           systemd # libudev.so.1, needed by the bundled openocd
         ];
 
-#        runScript = "bash";
-
         profile = ''
           export PLATFORMIO_CORE_DIR="$PWD/.platformio"
         '';

@@ -12,7 +12,8 @@ TC=.platformio/packages/toolchain-riscv/bin/riscv-wch-elf-gcc
 
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 printf '#include "keycodes.h"\n#include "keymap.h"\n' > "$tmp/e.c"
-map=$("$TC" -E -P -I src "$tmp/e.c" | tr -d ' ' | grep -oE '\[BASE\]=\{.*?\}\}' | head -1)
+# Each LAYOUT() expands onto its own line, so a greedy match stops at BASE's end.
+map=$("$TC" -E -P -I src "$tmp/e.c" | tr -d ' ' | grep -oE '\[BASE\]=\{.*\}\}' | head -1)
 
 fail=0
 expect() { # expect <row> <description> <hex bytes...>

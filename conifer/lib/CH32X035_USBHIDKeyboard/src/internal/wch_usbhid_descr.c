@@ -2,9 +2,6 @@
 #include "wch_usbhid_config.h"
 #include "wch_usbhid_internal.h"
 
-#define EP0_SIZE 64
-#define EP1_SIZE 64
-
 __attribute__((aligned(4))) unsigned char wch_usbhid_EP0_buffer[EP0_SIZE + 2];
 __attribute__((aligned(4))) unsigned char wch_usbhid_EP1_buffer[EP1_SIZE + 2];
 
@@ -122,79 +119,36 @@ const USB_STR_DESCR wch_usbhid_LangDescr = {
   .bString         = { WCH_USBHID_LANGUAGE }
 };
 
-USB_STR_DESCR wch_usbhid_ManufDescr = {
-  .bLength = (uint8_t)(2 + 2 * WCH_USBHID_MANUF_LEN),
+const USB_STR_DESCR wch_usbhid_ManufDescr = {
+  .bLength         = (uint8_t)(2 + 2 * WCH_USBHID_MANUF_LEN),
   .bDescriptorType = USB_DESCR_TYP_STRING,
-  .bString = {0} 
+  .bString         = u"" WCH_USBHID_MANUF_STR
 };
 
-USB_STR_DESCR wch_usbhid_ProdDescr = {
-  .bLength = (uint8_t)(2 + 2 * WCH_USBHID_PROD_LEN),
+const USB_STR_DESCR wch_usbhid_ProdDescr = {
+  .bLength         = (uint8_t)(2 + 2 * WCH_USBHID_PROD_LEN),
   .bDescriptorType = USB_DESCR_TYP_STRING,
-  .bString = {0} 
+  .bString         = u"" WCH_USBHID_PROD_STR
 };
 
+// The serial carries the chip's unique ID, so it is the one string filled in
+// at runtime; the prefix is already in place.
 USB_STR_DESCR wch_usbhid_SerDescr = {
-  .bLength = (uint8_t)(2 + 2 * WCH_USBHID_SERIAL_LEN),
+  .bLength         = (uint8_t)(2 + 2 * WCH_USBHID_SERIAL_LEN),
   .bDescriptorType = USB_DESCR_TYP_STRING,
-  .bString = {0} 
+  .bString         = u"" WCH_USBHID_SERIAL_PREFIX
 };
 
-USB_STR_DESCR wch_usbhid_InterfDescr = {
-  .bLength = (uint8_t)(2 + 2 * WCH_USBHID_INTERF_LEN),
-  .bDescriptorType = USB_DESCR_TYP_STRING,
-  .bString = {0} 
-};
-
-void uint32_to_hex_string(uint32_t value, char* output) {
+static void uint32_to_hex(uint32_t value, uint16_t* output) {
     const char hex_chars[] = "0123456789ABCDEF";
     for (int i = 7; i >= 0; i--) {
         output[7-i] = hex_chars[(value >> (i * 4)) & 0xF];
     }
 }
 
-void string_to_utf16le_descriptor(const char* source, uint16_t* dest, int max_len) {
-    int i = 0;
-    while (source[i] != '\0' && i < max_len) {
-        dest[i] = (uint16_t)source[i];
-        i++;
-    }
-}
-
-void generate_manufacturer_descriptor(void) {
-    string_to_utf16le_descriptor(WCH_USBHID_MANUF_STR, wch_usbhid_ManufDescr.bString, WCH_USBHID_MANUF_LEN);
-}
-
-void generate_product_descriptor(void) {
-    string_to_utf16le_descriptor(WCH_USBHID_PROD_STR, wch_usbhid_ProdDescr.bString, WCH_USBHID_PROD_LEN);
-}
-
-void generate_interface_descriptor(void) {
-    string_to_utf16le_descriptor(WCH_USBHID_INTERF_STR, wch_usbhid_InterfDescr.bString, WCH_USBHID_INTERF_LEN);
-}
-
-void generate_unique_serial_descriptor(void) {
-    uint32_t uid1 = *(volatile uint32_t*)CH32X035_ESIG_UNIID1;
-    uint32_t uid2 = *(volatile uint32_t*)CH32X035_ESIG_UNIID2; 
-    uint32_t uid3 = *(volatile uint32_t*)CH32X035_ESIG_UNIID3;
-    
-    char hex_string[24];
-    uint32_to_hex_string(uid3, &hex_string[0]);
-    uint32_to_hex_string(uid2, &hex_string[8]);
-    uint32_to_hex_string(uid1, &hex_string[16]);
-    
-    for (int i = 0; i < (int)WCH_USBHID_SERIAL_PREFIX_LEN; i++) {
-        wch_usbhid_SerDescr.bString[i] = (uint16_t)WCH_USBHID_SERIAL_PREFIX[i];
-    }
-    
-    for (int i = 0; i < WCH_USBHID_UID_HEX_CHARS; i++) {
-        wch_usbhid_SerDescr.bString[WCH_USBHID_SERIAL_PREFIX_LEN + i] = (uint16_t)hex_string[i];
-    }
-}
-
-void generate_all_string_descriptors(void) {
-    generate_manufacturer_descriptor();
-    generate_product_descriptor();
-    generate_interface_descriptor();
-    generate_unique_serial_descriptor();
+void generate_serial_descriptor(void) {
+    uint16_t* uid = &wch_usbhid_SerDescr.bString[WCH_USBHID_SERIAL_PREFIX_LEN];
+    uint32_to_hex(*(volatile uint32_t*)CH32X035_ESIG_UNIID3, &uid[0]);
+    uint32_to_hex(*(volatile uint32_t*)CH32X035_ESIG_UNIID2, &uid[8]);
+    uint32_to_hex(*(volatile uint32_t*)CH32X035_ESIG_UNIID1, &uid[16]);
 }
